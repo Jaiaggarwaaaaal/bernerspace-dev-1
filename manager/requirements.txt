@@ -1,0 +1,4 @@
+google-cloud-storage
+python-dotenv
+kubernetes
+PyYAML
