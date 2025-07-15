@@ -30,7 +30,7 @@ def upload_to_gcs(file_path, bucket_name, blob_name=None):
         return False
 
     if blob_name is None:
-        blob_name = os.path.basename(file_path)
+        blob_name = f"uploads/{os.path.basename(file_path)}"
 
     print(f"Uploading '{file_path}' to bucket '{bucket_name}' as '{blob_name}'...")
 

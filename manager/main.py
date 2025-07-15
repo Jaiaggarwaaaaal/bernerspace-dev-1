@@ -4,6 +4,7 @@ import logging
 import tempfile
 import zipfile
 import tarfile
+import shutil
 import yaml
 from google.cloud import storage
 from google.api_core import exceptions
@@ -82,7 +83,7 @@ def process_new_zip(gcs_client, k8s_clients, blob):
     context_blob_name = f"build-contexts/{app_name}-{int(time.time())}.tar.gz"
     with tempfile.TemporaryDirectory() as temp_dir:
         try:
-            # 1. Download and Unzip
+            # 1. Download, Unzip, and flatten if necessary
             app_dir = download_and_unzip(blob, temp_dir)
 
             # 2. Validate Dockerfile exists
@@ -110,27 +111,34 @@ def process_new_zip(gcs_client, k8s_clients, blob):
                 logging.info(f"Successfully processed and deployed '{app_name}'.")
             else:
                 logging.error(f"Build job '{job_name}' failed. Deployment aborted.")
-                # Mark as processed even on failure to avoid retrying a broken build
                 processed_files.add(blob.name)
 
         except Exception as e:
             logging.error(f"An unexpected error occurred while processing '{app_name}': {e}")
-        finally:
-            # 7. Clean up the build context from GCS
-            logging.info(f"Cleaning up build context '{context_blob_name}'...")
-            try:
-                bucket = gcs_client.bucket(GCS_BUCKET_NAME)
-                context_blob = bucket.blob(context_blob_name)
-                if context_blob.exists():
-                    context_blob.delete()
-            except Exception as e:
-                logging.warning(f"Could not clean up build context '{context_blob_name}': {e}")
+        # finally:
+        #     # 7. Clean up the build context from GCS
+        #     logging.info(f"Cleaning up build context '{context_blob_name}'...")
+        #     try:
+        #         bucket = gcs_client.bucket(GCS_BUCKET_NAME)
+        #         context_blob = bucket.blob(context_blob_name)
+        #         if context_blob.exists():
+        #             context_blob.delete()
+        #     except Exception as e:
+        #         logging.warning(f"Could not clean up build context '{context_blob_name}': {e}")
 
 
 # --- Helper Functions ---
 
+def get_template_path(template_name):
+    """Constructs an absolute path to a template file."""
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    return os.path.join(script_dir, 'templates', template_name)
+
+
 def download_and_unzip(blob, temp_dir):
-    """Downloads a GCS blob and unzips it."""
+    """
+    Downloads a GCS blob, unzips it, and flattens any single-directory structures.
+    """
     local_zip_path = os.path.join(temp_dir, os.path.basename(blob.name))
     app_dir = os.path.join(temp_dir, 'app')
     os.makedirs(app_dir)
@@ -141,6 +149,19 @@ def download_and_unzip(blob, temp_dir):
     logging.info(f"Unzipping to '{app_dir}'...")
     with zipfile.ZipFile(local_zip_path, 'r') as zip_ref:
         zip_ref.extractall(app_dir)
+
+    # Check for a single root directory and flatten it if found
+    extracted_items = os.listdir(app_dir)
+    if len(extracted_items) == 1:
+        single_item_path = os.path.join(app_dir, extracted_items[0])
+        if os.path.isdir(single_item_path):
+            logging.info(f"Detected single root directory '{extracted_items[0]}'. Promoting its contents.")
+            # Move all contents from the subdirectory up one level
+            for item in os.listdir(single_item_path):
+                shutil.move(os.path.join(single_item_path, item), app_dir)
+            # Remove the now-empty subdirectory
+            os.rmdir(single_item_path)
+            
     return app_dir
 
 def create_and_upload_context(gcs_client, source_dir, bucket_name, blob_name):
@@ -158,31 +179,54 @@ def create_and_upload_context(gcs_client, source_dir, bucket_name, blob_name):
     blob.upload_from_filename(local_tar_path)
 
 def create_kaniko_job(k8s_batch_v1, app_name, context_gcs_uri, destination_image):
-    """Creates and submits a Kaniko build job."""
+    """Creates and submits a Kaniko build job using an initContainer to fetch the context."""
     job_name = f"build-{app_name}-{int(time.time())}"
-    logging.info(f"Creating Kaniko Job: {job_name}")
+    logging.info(f"Creating Kaniko Job with initContainer: {job_name}")
 
-    kaniko_args = [
-        f"--context={context_gcs_uri}",
-        f"--destination={destination_image}",
-        "--cache=true",
-        f"--cache-repo={CONTAINER_REGISTRY_URL}/cache"
-    ]
-    container = client.V1Container(
-        name="kaniko",
-        image="gcr.io/kaniko-project/executor:latest",
-        args=kaniko_args,
+    # This init container downloads the gzipped tarball from GCS and places it
+    # into a shared volume that the main build container can access.
+    init_container = client.V1Container(
+        name="setup-source",
+        image="gcr.io/google.com/cloudsdktool/cloud-sdk:slim",
+        command=["/bin/sh", "-c"],
+        args=[f"gsutil cp {context_gcs_uri} /workspace/context.tar.gz"],
+        volume_mounts=[client.V1VolumeMount(name="workspace", mount_path="/workspace")]
     )
-    
+
+    # The main Kaniko container now builds from the local tarball in the shared volume.
+    # The context path must be prefixed with 'tar://' to indicate it's a tarball.
+    kaniko_container = client.V1Container(
+        name="kaniko",
+        image="gcr.io/kaniko-project/executor:v1.9.0",
+        args=[
+            "--context=tar:///workspace/context.tar.gz",
+            f"--destination={destination_image}",
+            "--cache=true",
+            f"--cache-repo={CONTAINER_REGISTRY_URL}/cache",
+        ],
+        volume_mounts=[client.V1VolumeMount(name="workspace", mount_path="/workspace")],
+        resources=client.V1ResourceRequirements(
+            requests={"cpu": "500m", "memory": "1Gi"},
+            limits={"cpu": "500m", "memory": "1Gi"}
+        ),
+    )
+
+    # The Pod template now includes the init container and the shared volume.
     template = client.V1PodTemplateSpec(
-        spec=client.V1PodSpec(restart_policy="Never", containers=[container], service_account_name=BUILD_SERVICE_ACCOUNT_NAME),
+        spec=client.V1PodSpec(
+            restart_policy="Never",
+            init_containers=[init_container],
+            containers=[kaniko_container],
+            service_account_name=BUILD_SERVICE_ACCOUNT_NAME,
+            volumes=[client.V1Volume(name="workspace", empty_dir=client.V1EmptyDirVolumeSource())]
+        ),
     )
     
     job = client.V1Job(
         api_version="batch/v1",
         kind="Job",
         metadata=client.V1ObjectMeta(name=job_name, labels={"app": app_name}),
-        spec=client.V1JobSpec(template=template, backoff_limit=1, ttl_seconds_after_finished=300)
+        spec=client.V1JobSpec(template=template, backoff_limit=1)
     )
     
     k8s_batch_v1.create_namespaced_job(body=job, namespace=K8S_NAMESPACE)
@@ -215,7 +259,8 @@ def deploy_application(k8s_clients, app_name, image_name):
     
     # Process Deployment
     try:
-        with open("templates/deployment.yaml") as f:
+        deployment_template_path = get_template_path("deployment.yaml")
+        with open(deployment_template_path) as f:
             deployment_manifest_str = f.read().replace("{{APP_NAME}}", app_name)
             deployment_manifest_str = deployment_manifest_str.replace("{{IMAGE_NAME}}", image_name)
             deployment_manifest = yaml.safe_load(deployment_manifest_str)
@@ -244,7 +289,8 @@ def deploy_application(k8s_clients, app_name, image_name):
 
     # Process Service
     try:
-        with open("templates/service.yaml") as f:
+        service_template_path = get_template_path("service.yaml")
+        with open(service_template_path) as f:
             service_manifest = yaml.safe_load(f.read().replace("{{APP_NAME}}", app_name))
         
         try:

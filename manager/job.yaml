@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: manual-kaniko-job-test-init
+  namespace: bspacekubs
+spec:
+  template:
+    spec:
+      serviceAccountName: bspace
+      initContainers:
+      - name: setup-source
+        image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+        command: ["/bin/sh", "-c"]
+        args:
+        - "gsutil cp gs://bspace-1/build-contexts/mcp-server-airbnb-main-1752598093.tar.gz /workspace/context.tar.gz"
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+      containers:
+      - name: kaniko
+        image: gcr.io/kaniko-project/executor:v1.9.0
+        args:
+        - "--context=tar:///workspace/context.tar.gz"
+        - "--destination=asia-south1-docker.pkg.dev/airy-totality-465918-i2/bspace-1/manual-test-init:latest"
+        - "--cache=true"
+        - "--cache-repo=asia-south1-docker.pkg.dev/airy-totality-465918-i2/bspace-1/cache"
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+      volumes:
+      - name: workspace
+        emptyDir: {}
+      restartPolicy: Never
+  backoffLimit: 1
