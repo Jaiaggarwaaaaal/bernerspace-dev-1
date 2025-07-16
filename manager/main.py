@@ -12,11 +12,29 @@ from google.auth import exceptions as auth_exceptions
 from kubernetes import client, config
 from dotenv import load_dotenv
 
+# ... (imports) ...
+from dotenv import load_dotenv
+
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 load_dotenv()
 
+LOG_FILE_PATH = "processed_files.log"
+
+def load_processed_files():
+    """Loads the set of processed filenames from a log file."""
+    if not os.path.exists(LOG_FILE_PATH):
+        return set()
+    with open(LOG_FILE_PATH, "r") as f:
+        return set(line.strip() for line in f)
+
+def save_processed_file(filename):
+    """Appends a successfully processed filename to the log file."""
+    with open(LOG_FILE_PATH, "a") as f:
+        f.write(f"{filename}\n")
+
 # GCS Configuration
+
 GCS_BUCKET_NAME = os.getenv('GCS_BUCKET_NAME')
 POLL_INTERVAL_SECONDS = 30
 # Container Registry Configuration
@@ -62,6 +80,8 @@ def init_k8s_clients():
 
 def watch_gcs_bucket(gcs_client, k8s_clients):
     """Polls GCS for new .zip files and triggers the build/deploy process."""
+    processed_files = load_processed_files()
+    logging.info(f"Loaded {len(processed_files)} previously processed files.")
     logging.info("Starting GCS bucket watch...")
     while True:
         try:
@@ -69,13 +89,56 @@ def watch_gcs_bucket(gcs_client, k8s_clients):
             for blob in blobs:
                 if blob.name.endswith('.zip') and blob.name not in processed_files:
                     logging.info(f"New file detected: '{blob.name}'.")
-                    process_new_zip(gcs_client, k8s_clients, blob)
+                    process_new_zip(gcs_client, k8s_clients, blob, processed_files) # Pass the set
             time.sleep(POLL_INTERVAL_SECONDS)
         except Exception as e:
             logging.error(f"Error polling bucket: {e}")
             time.sleep(POLL_INTERVAL_SECONDS * 2)
 
-def process_new_zip(gcs_client, k8s_clients, blob):
+def process_new_zip(gcs_client, k8s_clients, blob, processed_files):
+    """Orchestrates the download, build, and deployment for a new zip file."""
+    app_name = os.path.basename(blob.name).replace('.zip', '').lower()
+    logging.info(f"Processing app: {app_name}")
+    
+    context_blob_name = f"build-contexts/{app_name}-{int(time.time())}.tar.gz"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        try:
+            # 1. Download, Unzip, and flatten if necessary
+            app_dir = download_and_unzip(blob, temp_dir)
+
+            # 2. Validate Dockerfile exists
+            if not os.path.exists(os.path.join(app_dir, 'Dockerfile')):
+                logging.error(f"Dockerfile not found in the root of '{blob.name}'. Aborting.")
+                save_processed_file(blob.name) # Mark as processed to avoid retries
+                processed_files.add(blob.name) 
+                return
+
+            # 3. Create and Upload Build Context
+            context_gcs_uri = f"gs://{GCS_BUCKET_NAME}/{context_blob_name}"
+            create_and_upload_context(gcs_client, app_dir, GCS_BUCKET_NAME, context_blob_name)
+            
+            # 4. Create Kaniko Build Job
+            destination_image = f"{CONTAINER_REGISTRY_URL}/{app_name}:latest"
+            job_name = create_kaniko_job(k8s_clients["batch"], app_name, context_gcs_uri, destination_image)
+
+            # 5. Watch the build job for completion
+            build_succeeded = watch_build_job(k8s_clients["batch"], job_name, K8S_NAMESPACE)
+
+            # 6. Deploy on success
+            if build_succeeded:
+                logging.info(f"Build successful for '{app_name}'. Proceeding to deployment.")
+                deploy_application(k8s_clients, app_name, destination_image)
+                save_processed_file(blob.name)
+                processed_files.add(blob.name)
+                logging.info(f"Successfully processed and deployed '{app_name}'.")
+            else:
+                logging.error(f"Build job '{job_name}' failed. Deployment aborted.")
+                save_processed_file(blob.name) # Also save on build failure
+                processed_files.add(blob.name)
+
+        except Exception as e:
+            logging.error(f"An unexpected error occurred while processing '{app_name}': {e}")
+        # ... (rest of the function) ...
     """Orchestrates the download, build, and deployment for a new zip file."""
     app_name = os.path.basename(blob.name).replace('.zip', '').lower()
     logging.info(f"Processing app: {app_name}")
