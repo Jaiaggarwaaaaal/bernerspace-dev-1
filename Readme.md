@@ -1,0 +1,1 @@
+Place .env in the manager folder

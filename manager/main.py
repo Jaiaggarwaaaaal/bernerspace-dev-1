@@ -22,8 +22,8 @@ POLL_INTERVAL_SECONDS = 30
 # Container Registry Configuration
 CONTAINER_REGISTRY_URL = os.getenv('CONTAINER_REGISTRY_URL')
 # Kubernetes Configuration
-K8S_NAMESPACE = os.getenv('K8S_NAMESPACE', 'default')
-BUILD_SERVICE_ACCOUNT_NAME = os.getenv('BUILD_SERVICE_ACCOUNT_NAME', 'default')
+K8S_NAMESPACE = os.getenv('K8S_NAMESPACE', 'bspacekubs')
+BUILD_SERVICE_ACCOUNT_NAME = os.getenv('BUILD_SERVICE_ACCOUNT_NAME', 'bspace')
 
 processed_files = set()
 
@@ -253,6 +253,30 @@ def watch_build_job(k8s_batch_v1, job_name, namespace):
             return False
         time.sleep(15)
 
+# ... (previous code) ...
+
+# Add the new networking client
+def init_k8s_clients():
+    """Initializes Kubernetes clients, trying in-cluster config first."""
+    try:
+        config.load_incluster_config()
+        logging.info("Loaded in-cluster Kubernetes configuration.")
+    except config.ConfigException:
+        try:
+            config.load_kube_config()
+            logging.info("Loaded local kubeconfig for development.")
+        except config.ConfigException as e:
+            logging.error(f"Could not configure Kubernetes client: {e}")
+            return None
+    return {
+        "batch": client.BatchV1Api(),
+        "apps": client.AppsV1Api(),
+        "core": client.CoreV1Api(),
+        "networking": client.NetworkingV1Api(), # <-- Add this client
+    }
+
+# ... (previous code) ...
+
 def deploy_application(k8s_clients, app_name, image_name):
     """Deploys an application using templates from the 'templates' directory."""
     logging.info(f"Deploying application '{app_name}' with image '{image_name}'.")
@@ -308,6 +332,44 @@ def deploy_application(k8s_clients, app_name, image_name):
     except Exception as e:
         logging.error(f"Error processing service for '{app_name}': {e}")
         raise
+
+    # Process Ingress
+    try:
+        domain_name = os.getenv('DOMAIN_NAME')
+        if not domain_name:
+            logging.warning("DOMAIN_NAME environment variable not set. Skipping Ingress creation.")
+            return
+
+        ingress_template_path = get_template_path("ingress.yaml")
+        with open(ingress_template_path) as f:
+            ingress_manifest_str = f.read().replace("{{APP_NAME}}", app_name)
+            ingress_manifest_str = ingress_manifest_str.replace("YOUR_DOMAIN.COM", domain_name)
+            ingress_manifest = yaml.safe_load(ingress_manifest_str)
+
+        try:
+            k8s_clients["networking"].read_namespaced_ingress(name=f"{app_name}-ingress", namespace=K8S_NAMESPACE)
+            logging.info(f"Ingress for '{app_name}' already exists. Patching.")
+            k8s_clients["networking"].patch_namespaced_ingress(
+                name=f"{app_name}-ingress",
+                namespace=K8S_NAMESPACE,
+                body=ingress_manifest
+            )
+        except client.ApiException as e:
+            if e.status == 404:
+                logging.info(f"Ingress for '{app_name}' not found. Creating new one.")
+                k8s_clients["networking"].create_namespaced_ingress(
+                    namespace=K8S_NAMESPACE, body=ingress_manifest
+                )
+            else:
+                raise
+        logging.info(f"Ingress for '{app_name}' created/updated.")
+
+    except Exception as e:
+        logging.error(f"Error processing ingress for '{app_name}': {e}")
+        raise
+
+# ... (rest of the code) ...
+
 
 
 def main():
