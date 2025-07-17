@@ -5,7 +5,7 @@ metadata:
   labels:
     app: "{{APP_NAME}}"
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: "{{APP_NAME}}"
@@ -26,3 +26,7 @@ spec:
           limits:
             memory: "128Mi"
             cpu: "500m"
+        env:
+        - name: "WEATHER_API_KEY"
+          value: "421beca2c604a7ff09fb3b1f2d105d05"
+      

@@ -3,11 +3,12 @@ kind: Ingress
 metadata:
   name: "{{APP_NAME}}-ingress"
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
   ingressClassName: nginx
   rules:
-  - host: "{{APP_NAME}}.YOUR_DOMAIN.COM" # <-- IMPORTANT: We will replace this
+  - host: "{{APP_NAME}}.ideabrowse.com"
     http:
       paths:
       - path: /
@@ -17,3 +18,7 @@ spec:
             name: "{{APP_NAME}}"
             port:
               number: 80
+  tls:
+  - hosts:
+    - "{{APP_NAME}}.ideabrowse.com"
+    secretName: "{{APP_NAME}}-tls" # cert-manager will create this secret for you
