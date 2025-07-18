@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: workload-identity-test
+  namespace: bspacekubs
+spec:
+  serviceAccountName: bspace
+  containers:
+  - name: workload-identity-test
+    image: google/cloud-sdk:slim
+    command: ["sleep", "3600"]

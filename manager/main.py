@@ -269,7 +269,7 @@ def create_kaniko_job(k8s_batch_v1, app_name, context_gcs_uri, destination_image
         ],
         volume_mounts=[client.V1VolumeMount(name="workspace", mount_path="/workspace")],
         resources=client.V1ResourceRequirements(
-            requests={"cpu": "500m", "memory": "1Gi"},
+            requests={"cpu": "250m", "memory": "512Mi"},
             limits={"cpu": "500m", "memory": "1Gi"}
         ),
     )
