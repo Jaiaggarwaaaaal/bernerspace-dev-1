@@ -55,8 +55,8 @@ def upload_to_gcs(file_path, bucket_name, blob_name=None):
 
 def main():
     """Main function to parse arguments and initiate the upload."""
-    parser = argparse.ArgumentParser(description="Upload a ZIP file to Google Cloud Storage.")
-    parser.add_argument("file_path", type=str, help="The path to the ZIP file to upload.")
+    parser = argparse.ArgumentParser(description="Upload a .tar.gz build context to Google Cloud Storage.")
+    parser.add_argument("file_path", type=str, help="The path to the .tar.gz file to upload.")
     
     args = parser.parse_args()
 

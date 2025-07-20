@@ -78,66 +78,88 @@ def init_k8s_clients():
 
 # --- Main Workflow ---
 
+def validate_tarball_dockerfile(blob):
+    """Downloads a tarball and checks for a Dockerfile at its root."""
+    with tempfile.NamedTemporaryFile() as temp_tar:
+        try:
+            logging.info(f"Validating Dockerfile in '{blob.name}'...")
+            blob.download_to_filename(temp_tar.name)
+            with tarfile.open(temp_tar.name, "r:gz") as tar:
+                # Check for Dockerfile at the root of the archive
+                dockerfile_found = any(
+                    member.name == 'Dockerfile' and member.isfile()
+                    for member in tar.getmembers()
+                )
+                if dockerfile_found:
+                    logging.info("Dockerfile found in tarball.")
+                    return True
+                else:
+                    logging.error(f"Dockerfile not found at the root of '{blob.name}'.")
+                    return False
+        except tarfile.ReadError:
+            logging.error(f"File '{blob.name}' is not a valid tar.gz file.")
+            return False
+        except Exception as e:
+            logging.error(f"Error validating tarball '{blob.name}': {e}")
+            return False
+
 def watch_gcs_bucket(gcs_client, k8s_clients):
-    """Polls GCS for new .zip files and triggers the build/deploy process."""
+    """Polls GCS for new .tar.gz files and triggers the build/deploy process."""
     processed_files = load_processed_files()
     logging.info(f"Loaded {len(processed_files)} previously processed files.")
-    logging.info("Starting GCS bucket watch...")
+    logging.info("Starting GCS bucket watch for .tar.gz files...")
     while True:
         try:
             blobs = gcs_client.list_blobs(GCS_BUCKET_NAME, prefix="uploads/")
             for blob in blobs:
-                if blob.name.endswith('.zip') and blob.name not in processed_files:
+                if blob.name.endswith('.tar.gz') and blob.name not in processed_files:
                     logging.info(f"New file detected: '{blob.name}'.")
-                    process_new_zip(gcs_client, k8s_clients, blob, processed_files) # Pass the set
+                    process_new_tarball(gcs_client, k8s_clients, blob, processed_files) # Pass the set
             time.sleep(POLL_INTERVAL_SECONDS)
         except Exception as e:
             logging.error(f"Error polling bucket: {e}")
             time.sleep(POLL_INTERVAL_SECONDS * 2)
 
-def process_new_zip(gcs_client, k8s_clients, blob, processed_files):
-    """Orchestrates the download, build, and deployment for a new zip file."""
-    app_name = os.path.basename(blob.name).replace('.zip', '').lower()
+def process_new_tarball(gcs_client, k8s_clients, blob, processed_files):
+    """Orchestrates the build and deployment for a new .tar.gz file."""
+    # Extract app_name from the filename, e.g., "uploads/myapp.tar.gz" -> "myapp"
+    app_name = os.path.basename(blob.name).replace('.tar.gz', '').lower()
     logging.info(f"Processing app: {app_name}")
-    
-    context_blob_name = f"build-contexts/{app_name}-{int(time.time())}.tar.gz"
-    with tempfile.TemporaryDirectory() as temp_dir:
-        try:
-            # 1. Download, Unzip, and flatten if necessary
-            app_dir = download_and_unzip(blob, temp_dir)
 
-            # 2. Validate Dockerfile exists
-            if not os.path.exists(os.path.join(app_dir, 'Dockerfile')):
-                logging.error(f"Dockerfile not found in the root of '{blob.name}'. Aborting.")
-                save_processed_file(blob.name) # Mark as processed to avoid retries
-                processed_files.add(blob.name) 
-                return
+    try:
+        # 1. Validate Dockerfile exists in the tarball
+        if not validate_tarball_dockerfile(blob):
+            logging.error(f"Validation failed for '{blob.name}'. Aborting.")
+            save_processed_file(blob.name) # Mark as processed to avoid retries
+            processed_files.add(blob.name)
+            return
 
-            # 3. Create and Upload Build Context
-            context_gcs_uri = f"gs://{GCS_BUCKET_NAME}/{context_blob_name}"
-            create_and_upload_context(gcs_client, app_dir, GCS_BUCKET_NAME, context_blob_name)
-            
-            # 4. Create Kaniko Build Job
-            destination_image = f"{CONTAINER_REGISTRY_URL}/{app_name}:latest"
-            job_name = create_kaniko_job(k8s_clients["batch"], app_name, context_gcs_uri, destination_image)
+        # 2. The uploaded tarball is the build context.
+        context_gcs_uri = f"gs://{GCS_BUCKET_NAME}/{blob.name}"
+        
+        # 3. Create Kaniko Build Job
+        destination_image = f"{CONTAINER_REGISTRY_URL}/{app_name}:latest"
+        job_name = create_kaniko_job(k8s_clients["batch"], app_name, context_gcs_uri, destination_image)
 
-            # 5. Watch the build job for completion
-            build_succeeded = watch_build_job(k8s_clients["batch"], job_name, K8S_NAMESPACE)
+        # 4. Watch the build job for completion
+        build_succeeded = watch_build_job(k8s_clients["batch"], job_name, K8S_NAMESPACE)
 
-            # 6. Deploy on success
-            if build_succeeded:
-                logging.info(f"Build successful for '{app_name}'. Proceeding to deployment.")
-                deploy_application(k8s_clients, app_name, destination_image)
-                save_processed_file(blob.name)
-                processed_files.add(blob.name)
-                logging.info(f"Successfully processed and deployed '{app_name}'.")
-            else:
-                logging.error(f"Build job '{job_name}' failed. Deployment aborted.")
-                save_processed_file(blob.name) # Also save on build failure
-                processed_files.add(blob.name)
+        # 5. Deploy on success
+        if build_succeeded:
+            logging.info(f"Build successful for '{app_name}'. Proceeding to deployment.")
+            deploy_application(k8s_clients, app_name, destination_image)
+            save_processed_file(blob.name)
+            processed_files.add(blob.name)
+            logging.info(f"Successfully processed and deployed '{app_name}'.")
+        else:
+            logging.error(f"Build job '{job_name}' failed. Deployment aborted.")
+            save_processed_file(blob.name) # Also save on build failure
+            processed_files.add(blob.name)
 
-        except Exception as e:
-            logging.error(f"An unexpected error occurred while processing '{app_name}': {e}")
+    except Exception as e:
+        logging.error(f"An unexpected error occurred while processing '{app_name}': {e}")
+        save_processed_file(blob.name) # Mark as processed on any failure
+        processed_files.add(blob.name)
         # ... (rest of the function) ...
     """Orchestrates the download, build, and deployment for a new zip file."""
     app_name = os.path.basename(blob.name).replace('.zip', '').lower()
@@ -198,48 +220,7 @@ def get_template_path(template_name):
     return os.path.join(script_dir, 'templates', template_name)
 
 
-def download_and_unzip(blob, temp_dir):
-    """
-    Downloads a GCS blob, unzips it, and flattens any single-directory structures.
-    """
-    local_zip_path = os.path.join(temp_dir, os.path.basename(blob.name))
-    app_dir = os.path.join(temp_dir, 'app')
-    os.makedirs(app_dir)
-    
-    logging.info(f"Downloading '{blob.name}'...")
-    blob.download_to_filename(local_zip_path)
-    
-    logging.info(f"Unzipping to '{app_dir}'...")
-    with zipfile.ZipFile(local_zip_path, 'r') as zip_ref:
-        zip_ref.extractall(app_dir)
 
-    # Check for a single root directory and flatten it if found
-    extracted_items = os.listdir(app_dir)
-    if len(extracted_items) == 1:
-        single_item_path = os.path.join(app_dir, extracted_items[0])
-        if os.path.isdir(single_item_path):
-            logging.info(f"Detected single root directory '{extracted_items[0]}'. Promoting its contents.")
-            # Move all contents from the subdirectory up one level
-            for item in os.listdir(single_item_path):
-                shutil.move(os.path.join(single_item_path, item), app_dir)
-            # Remove the now-empty subdirectory
-            os.rmdir(single_item_path)
-            
-    return app_dir
-
-def create_and_upload_context(gcs_client, source_dir, bucket_name, blob_name):
-    """Creates a .tar.gz from a directory and uploads it to GCS."""
-    temp_dir = os.path.dirname(source_dir)
-    local_tar_path = os.path.join(temp_dir, "context.tar.gz")
-
-    logging.info(f"Creating build context tarball at '{local_tar_path}'...")
-    with tarfile.open(local_tar_path, "w:gz") as tar:
-        tar.add(source_dir, arcname='.')
-    
-    logging.info(f"Uploading build context to gs://{bucket_name}/{blob_name}...")
-    bucket = gcs_client.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
-    blob.upload_from_filename(local_tar_path)
 
 def create_kaniko_job(k8s_batch_v1, app_name, context_gcs_uri, destination_image):
     """Creates and submits a Kaniko build job using an initContainer to fetch the context."""
