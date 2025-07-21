@@ -26,6 +26,7 @@ spec:
           limits:
             memory: "64Mi"
             cpu: "250m"
+            # Example of adding you code .env
         env:
         - name: "WEATHER_API_KEY"
           value: "<YOUR_WEATHER_API_KEY>"
