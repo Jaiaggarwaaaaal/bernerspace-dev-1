@@ -85,16 +85,19 @@ def validate_tarball_dockerfile(blob):
             logging.info(f"Validating Dockerfile in '{blob.name}'...")
             blob.download_to_filename(temp_tar.name)
             with tarfile.open(temp_tar.name, "r:gz") as tar:
-                # Check for Dockerfile at the root of the archive
+                # Check for Dockerfile at the root, allowing for './' prefix
                 dockerfile_found = any(
-                    member.name == 'Dockerfile' and member.isfile()
+                    (member.name == 'Dockerfile' or member.name == './Dockerfile') and member.isfile()
                     for member in tar.getmembers()
                 )
                 if dockerfile_found:
                     logging.info("Dockerfile found in tarball.")
                     return True
                 else:
+                    # Add extra logging to see what files are in the archive
+                    member_names = [member.name for member in tar.getmembers()]
                     logging.error(f"Dockerfile not found at the root of '{blob.name}'.")
+                    logging.error(f"Archive contains the following files: {member_names}")
                     return False
         except tarfile.ReadError:
             logging.error(f"File '{blob.name}' is not a valid tar.gz file.")
@@ -160,56 +163,6 @@ def process_new_tarball(gcs_client, k8s_clients, blob, processed_files):
         logging.error(f"An unexpected error occurred while processing '{app_name}': {e}")
         save_processed_file(blob.name) # Mark as processed on any failure
         processed_files.add(blob.name)
-        # ... (rest of the function) ...
-    """Orchestrates the download, build, and deployment for a new zip file."""
-    app_name = os.path.basename(blob.name).replace('.zip', '').lower()
-    logging.info(f"Processing app: {app_name}")
-    
-    context_blob_name = f"build-contexts/{app_name}-{int(time.time())}.tar.gz"
-    with tempfile.TemporaryDirectory() as temp_dir:
-        try:
-            # 1. Download, Unzip, and flatten if necessary
-            app_dir = download_and_unzip(blob, temp_dir)
-
-            # 2. Validate Dockerfile exists
-            if not os.path.exists(os.path.join(app_dir, 'Dockerfile')):
-                logging.error(f"Dockerfile not found in the root of '{blob.name}'. Aborting.")
-                processed_files.add(blob.name) # Mark as processed to avoid retries
-                return
-
-            # 3. Create and Upload Build Context
-            context_gcs_uri = f"gs://{GCS_BUCKET_NAME}/{context_blob_name}"
-            create_and_upload_context(gcs_client, app_dir, GCS_BUCKET_NAME, context_blob_name)
-            
-            # 4. Create Kaniko Build Job
-            destination_image = f"{CONTAINER_REGISTRY_URL}/{app_name}:latest"
-            job_name = create_kaniko_job(k8s_clients["batch"], app_name, context_gcs_uri, destination_image)
-
-            # 5. Watch the build job for completion
-            build_succeeded = watch_build_job(k8s_clients["batch"], job_name, K8S_NAMESPACE)
-
-            # 6. Deploy on success
-            if build_succeeded:
-                logging.info(f"Build successful for '{app_name}'. Proceeding to deployment.")
-                deploy_application(k8s_clients, app_name, destination_image)
-                processed_files.add(blob.name)
-                logging.info(f"Successfully processed and deployed '{app_name}'.")
-            else:
-                logging.error(f"Build job '{job_name}' failed. Deployment aborted.")
-                processed_files.add(blob.name)
-
-        except Exception as e:
-            logging.error(f"An unexpected error occurred while processing '{app_name}': {e}")
-        # finally:
-        #     # 7. Clean up the build context from GCS
-        #     logging.info(f"Cleaning up build context '{context_blob_name}'...")
-        #     try:
-        #         bucket = gcs_client.bucket(GCS_BUCKET_NAME)
-        #         context_blob = bucket.blob(context_blob_name)
-        #         if context_blob.exists():
-        #             context_blob.delete()
-        #     except Exception as e:
-        #         logging.warning(f"Could not clean up build context '{context_blob_name}': {e}")
 
 
 # --- Helper Functions ---

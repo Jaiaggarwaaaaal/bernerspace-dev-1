@@ -52,7 +52,7 @@ GCS_BUCKET_NAME="your-gcs-bucket-name"
 CONTAINER_REGISTRY_URL="your-container-registry-url"
 K8S_NAMESPACE="your-kubernetes-namespace"
 BUILD_SERVICE_ACCOUNT_NAME="your-build-service-account"
-DOMAIN_NAME="your-domain.com"
+DOMAIN_NAME="ideabrowse.com"
 LETSENCRYPT_EMAIL="your-email@example.com"
 ```
 
