@@ -52,16 +52,20 @@ GCS_BUCKET_NAME="your-gcs-bucket-name"
 CONTAINER_REGISTRY_URL="your-container-registry-url"
 K8S_NAMESPACE="your-kubernetes-namespace"
 BUILD_SERVICE_ACCOUNT_NAME="your-build-service-account"
+
+# --- Domain and Certificate Configuration ---
+# IMPORTANT: This project is configured to deploy applications as subdomains
+# of ideabrowse.com. You must use this domain name.
 DOMAIN_NAME="ideabrowse.com"
-LETSENCRYPT_EMAIL="your-email@example.com"
+LETSENCRYPT_EMAIL="your-personal-email@example.com"
 ```
 
-- `GCS_BUCKET_NAME`: The name of the GCS bucket to watch for new application packages.
-- `CONTAINER_REGISTRY_URL`: The URL of the container registry where the built images will be stored.
-- `K8S_NAMESPACE`: The Kubernetes namespace where the applications will be deployed.
+- `GCS_BUCKET_NAME`: The name of the GCS bucket where you will upload your application source code.
+- `CONTAINER_REGISTRY_URL`: The URL of the container registry where your application images will be stored.
+- `K8S_NAMESPACE`: The Kubernetes namespace where your applications will be deployed.
 - `BUILD_SERVICE_ACCOUNT_NAME`: The name of the Kubernetes service account to use for the build job.
-- `DOMAIN_NAME`: The domain name to use for the Ingress resource.
-- `LETSENCRYPT_EMAIL`: The email address to use for the Let's Encrypt certificate.
+- **`DOMAIN_NAME`**: **This value must be `ideabrowse.com`**. The system is designed to create a unique subdomain for your application under this primary domain (e.g., `your-app-name.ideabrowse.com`).
+- **`LETSENCRYPT_EMAIL`**: **Your personal email address**. Let's Encrypt will use this to send you important renewal notices for your application's specific subdomain certificate. This is critical for maintaining your application's security.
 
 ## Usage
 
