@@ -28,5 +28,5 @@ spec:
             cpu: "250m"
         env:
         - name: "WEATHER_API_KEY"
-          value: "421beca2c604a7ff09fb3b1f2d105d05"
+          value: "<YOUR_WEATHER_API_KEY>"
       

@@ -418,8 +418,8 @@ def deploy_application(k8s_clients, app_name, image_name):
 
 def main():
     """Main entry point."""
-    if not all([GCS_BUCKET_NAME, CONTAINER_REGISTRY_URL]):
-        logging.error("Missing required environment variables (GCS_BUCKET_NAME, CONTAINER_REGISTRY_URL).")
+    if not all([GCS_BUCKET_NAME, CONTAINER_REGISTRY_URL, os.getenv('LETSENCRYPT_EMAIL')]):
+        logging.error("Missing required environment variables (GCS_BUCKET_NAME, CONTAINER_REGISTRY_URL, LETSENCRYPT_EMAIL).")
         return
 
     gcs_client = get_gcs_client()
@@ -429,7 +429,57 @@ def main():
         logging.error("Failed to initialize clients. Exiting.")
         return
 
+    setup_cluster_issuer(k8s_clients)
     watch_gcs_bucket(gcs_client, k8s_clients)
+
+def setup_cluster_issuer(k8s_clients):
+    """Creates or updates the ClusterIssuer."""
+    email = os.getenv('LETSENCRYPT_EMAIL')
+    if not email:
+        logging.warning("LETSENCRYPT_EMAIL environment variable not set. Skipping ClusterIssuer setup.")
+        return
+
+    try:
+        template_path = get_template_path("../cluster-issuer.yaml")
+        with open(template_path) as f:
+            manifest_str = f.read().replace("{{LETSENCRYPT_EMAIL}}", email)
+            manifest = yaml.safe_load(manifest_str)
+
+        # The CustomObjectsApi is needed for ClusterIssuer
+        custom_api = client.CustomObjectsApi(k8s_clients['apps'].api_client)
+        
+        try:
+            custom_api.get_cluster_custom_object(
+                group="cert-manager.io",
+                version="v1",
+                plural="clusterissuers",
+                name=manifest['metadata']['name']
+            )
+            logging.info("ClusterIssuer already exists. Patching.")
+            custom_api.patch_cluster_custom_object(
+                group="cert-manager.io",
+                version="v1",
+                plural="clusterissuers",
+                name=manifest['metadata']['name'],
+                body=manifest
+            )
+        except client.ApiException as e:
+            if e.status == 404:
+                logging.info("ClusterIssuer not found. Creating new one.")
+                custom_api.create_cluster_custom_object(
+                    group="cert-manager.io",
+                    version="v1",
+                    plural="clusterissuers",
+                    body=manifest
+                )
+            else:
+                raise
+        logging.info("ClusterIssuer created/updated.")
+
+    except Exception as e:
+        logging.error(f"Error setting up ClusterIssuer: {e}")
+        raise
+
 
 if __name__ == "__main__":
     main()

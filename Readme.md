@@ -53,6 +53,7 @@ CONTAINER_REGISTRY_URL="your-container-registry-url"
 K8S_NAMESPACE="your-kubernetes-namespace"
 BUILD_SERVICE_ACCOUNT_NAME="your-build-service-account"
 DOMAIN_NAME="your-domain.com"
+LETSENCRYPT_EMAIL="your-email@example.com"
 ```
 
 - `GCS_BUCKET_NAME`: The name of the GCS bucket to watch for new application packages.
@@ -60,6 +61,7 @@ DOMAIN_NAME="your-domain.com"
 - `K8S_NAMESPACE`: The Kubernetes namespace where the applications will be deployed.
 - `BUILD_SERVICE_ACCOUNT_NAME`: The name of the Kubernetes service account to use for the build job.
 - `DOMAIN_NAME`: The domain name to use for the Ingress resource.
+- `LETSENCRYPT_EMAIL`: The email address to use for the Let's Encrypt certificate.
 
 ## Usage
 
