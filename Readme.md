@@ -107,6 +107,10 @@ docker push your-container-registry-url/gcs-to-k8s-deployment-manager:latest
 kubectl apply -f manager/deployment.yaml
 ```
 
+## Application Requirements
+
+When developing applications to be deployed by this manager, ensure your application is configured to listen on port `8000`. The Kubernetes Service template (`manager/templates/service.yaml`) is configured to route traffic to this port. For example, if using Uvicorn with FastAPI, your application should be started with `uvicorn main:app --host 0.0.0.0 --port 8000`.
+
 ## Built With
 
 - [Python](https://www.python.org/)
@@ -114,3 +118,18 @@ kubectl apply -f manager/deployment.yaml
 - [Kubernetes](https://kubernetes.io/)
 - [Kaniko](https://github.com/GoogleContainerTools/kaniko)
 - [Docker](https://www.docker.com/)
+
+## Creating Application Archives
+
+For the deployment manager to correctly process your application, you must package it as a `.tar.gz` file. The archive should have a "flat" structure, meaning the `Dockerfile` and all other source files are at the root of the archive, not inside a subdirectory.
+
+If your project is in a directory (e.g., `my-app`), you can create the archive with the following command:
+
+```bash
+tar -czf my-app.tar.gz -C my-app .
+```
+
+This command does the following:
+- `tar -czf my-app.tar.gz`: Creates a gzipped tarball named `my-app.tar.gz`.
+- `-C my-app`: Changes to the `my-app` directory before adding files.
+- `.`: Adds all files and folders from the current directory (which is now `my-app`) to the root of the archive.

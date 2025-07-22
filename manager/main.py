@@ -78,33 +78,50 @@ def init_k8s_clients():
 
 # --- Main Workflow ---
 
-def validate_tarball_dockerfile(blob):
-    """Downloads a tarball and checks for a Dockerfile at its root."""
+def find_dockerfile_path(blob):
+    """
+    Downloads a tarball and finds the path to the directory containing the Dockerfile.
+
+    Returns:
+        str: The sub-path to the build context (e.g., '.') or None if not found.
+    """
     with tempfile.NamedTemporaryFile() as temp_tar:
         try:
-            logging.info(f"Validating Dockerfile in '{blob.name}'...")
+            logging.info(f"Searching for Dockerfile in '{blob.name}'...")
             blob.download_to_filename(temp_tar.name)
             with tarfile.open(temp_tar.name, "r:gz") as tar:
-                # Check for Dockerfile at the root, allowing for './' prefix
-                dockerfile_found = any(
-                    (member.name == 'Dockerfile' or member.name == './Dockerfile') and member.isfile()
-                    for member in tar.getmembers()
+                members = tar.getmembers()
+                
+                # Search for Dockerfile at the root first
+                root_dockerfile = any(
+                    (m.name == 'Dockerfile' or m.name == './Dockerfile') and m.isfile()
+                    for m in members
                 )
-                if dockerfile_found:
-                    logging.info("Dockerfile found in tarball.")
-                    return True
-                else:
-                    # Add extra logging to see what files are in the archive
-                    member_names = [member.name for member in tar.getmembers()]
-                    logging.error(f"Dockerfile not found at the root of '{blob.name}'.")
-                    logging.error(f"Archive contains the following files: {member_names}")
-                    return False
+                if root_dockerfile:
+                    logging.info("Dockerfile found at the root.")
+                    return "."
+
+                # If not at root, search in immediate subdirectories
+                for member in members:
+                    # Path components: e.g., 'folder/Dockerfile' -> ['folder', 'Dockerfile']
+                    path_parts = os.path.normpath(member.name).split(os.sep)
+                    if len(path_parts) == 2 and path_parts[1] == 'Dockerfile' and member.isfile():
+                        context_path = path_parts[0]
+                        logging.info(f"Dockerfile found in subdirectory: '{context_path}'")
+                        return context_path
+                
+                # If still not found, log and return None
+                member_names = [member.name for member in members]
+                logging.error(f"Dockerfile not found at root or in a subdirectory of '{blob.name}'.")
+                logging.error(f"Archive contains the following files: {member_names}")
+                return None
+
         except tarfile.ReadError:
             logging.error(f"File '{blob.name}' is not a valid tar.gz file.")
-            return False
+            return None
         except Exception as e:
             logging.error(f"Error validating tarball '{blob.name}': {e}")
-            return False
+            return None
 
 def watch_gcs_bucket(gcs_client, k8s_clients):
     """Polls GCS for new .tar.gz files and triggers the build/deploy process."""
@@ -130,9 +147,10 @@ def process_new_tarball(gcs_client, k8s_clients, blob, processed_files):
     logging.info(f"Processing app: {app_name}")
 
     try:
-        # 1. Validate Dockerfile exists in the tarball
-        if not validate_tarball_dockerfile(blob):
-            logging.error(f"Validation failed for '{blob.name}'. Aborting.")
+        # 1. Find the Dockerfile build context path
+        context_sub_path = find_dockerfile_path(blob)
+        if not context_sub_path:
+            logging.error(f"Validation failed for '{blob.name}'. No Dockerfile found. Aborting.")
             save_processed_file(blob.name) # Mark as processed to avoid retries
             processed_files.add(blob.name)
             return
@@ -142,7 +160,7 @@ def process_new_tarball(gcs_client, k8s_clients, blob, processed_files):
         
         # 3. Create Kaniko Build Job
         destination_image = f"{CONTAINER_REGISTRY_URL}/{app_name}:latest"
-        job_name = create_kaniko_job(k8s_clients["batch"], app_name, context_gcs_uri, destination_image)
+        job_name = create_kaniko_job(k8s_clients["batch"], app_name, context_gcs_uri, destination_image, context_sub_path)
 
         # 4. Watch the build job for completion
         build_succeeded = watch_build_job(k8s_clients["batch"], job_name, K8S_NAMESPACE)
@@ -175,10 +193,10 @@ def get_template_path(template_name):
 
 
 
-def create_kaniko_job(k8s_batch_v1, app_name, context_gcs_uri, destination_image):
+def create_kaniko_job(k8s_batch_v1, app_name, context_gcs_uri, destination_image, context_sub_path="."):
     """Creates and submits a Kaniko build job using an initContainer to fetch the context."""
     job_name = f"build-{app_name}-{int(time.time())}"
-    logging.info(f"Creating Kaniko Job with initContainer: {job_name}")
+    logging.info(f"Creating Kaniko Job: {job_name} with context sub-path: '{context_sub_path}'")
 
     # This init container downloads the gzipped tarball from GCS and places it
     # into a shared volume that the main build container can access.
@@ -192,15 +210,19 @@ def create_kaniko_job(k8s_batch_v1, app_name, context_gcs_uri, destination_image
 
     # The main Kaniko container now builds from the local tarball in the shared volume.
     # The context path must be prefixed with 'tar://' to indicate it's a tarball.
+    kaniko_args = [
+        "--context=tar:///workspace/context.tar.gz",
+        f"--destination={destination_image}",
+        "--cache=true",
+        f"--cache-repo={CONTAINER_REGISTRY_URL}/cache",
+    ]
+    if context_sub_path and context_sub_path != ".":
+        kaniko_args.append(f"--context-sub-path={context_sub_path}")
+
     kaniko_container = client.V1Container(
         name="kaniko",
         image="gcr.io/kaniko-project/executor:v1.9.0",
-        args=[
-            "--context=tar:///workspace/context.tar.gz",
-            f"--destination={destination_image}",
-            "--cache=true",
-            f"--cache-repo={CONTAINER_REGISTRY_URL}/cache",
-        ],
+        args=kaniko_args,
         volume_mounts=[client.V1VolumeMount(name="workspace", mount_path="/workspace")],
         resources=client.V1ResourceRequirements(
             requests={"cpu": "250m", "memory": "512Mi"},
