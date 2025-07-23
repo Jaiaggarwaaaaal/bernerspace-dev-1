@@ -1,0 +1,11 @@
+# manager/cloudbuild.yaml
+steps:
+- name: 'gcr.io/cloud-builders/kubectl'
+  args:
+  - 'apply'
+  - '-f'
+  - './manager/manager-deployment.yaml'
+  # The substitutions are automatically provided by the gcloud builds submit command
+  env:
+  - 'CLOUDSDK_COMPUTE_ZONE=${_ZONE}'
+  - 'CLOUDSDK_CONTAINER_CLUSTER=${_CLUSTER}'

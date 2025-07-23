@@ -58,26 +58,15 @@ jobs:
         docker push ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest
 
     # 6. Deploy to Google Kubernetes Engine
-    - name: Deploy to GKE
+    - name: Deploy via Cloud Build Proxy
       run: |
-        # Install the GKE auth plugin using the official Google Cloud procedure
-        sudo apt-get update -y
-        sudo apt-get install -y apt-transport-https ca-certificates gnupg
-        echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
-        curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
-        sudo apt-get update -y
-        sudo apt-get install -y google-cloud-cli-gke-gcloud-auth-plugin
-
-        # Get GKE credentials
-        gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER_NAME }} --zone ${{ secrets.GKE_CLUSTER_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
-
-        # Use sed to replace placeholder values in the manifest with our secrets
+        # First, substitute the placeholder values in the deployment manifest
         sed -i'' -e 's|<MANAGER_IMAGE_REGISTRY_URL>|${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
         sed -i'' -e 's|<CONTAINER_REGISTRY_URL>|${{ secrets.CONTAINER_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
         sed -i'' -e 's|<YOUR_EMAIL_FOR_LETSENCRYPT>|${{ secrets.LETSENCRYPT_EMAIL }}|g' ./manager/manager-deployment.yaml
-        
-        # Also update the image tag to the specific commit SHA for precise versioning
         sed -i'' -e 's|:latest|:${{ github.sha }}|g' ./manager/manager-deployment.yaml
 
-        # Apply the configured manifest to the cluster
-        kubectl apply -f ./manager/manager-deployment.yaml --validate=false
+        # Now, submit the configured file to Cloud Build to apply
+        gcloud builds submit . 
+          --config=./manager/cloudbuild.yaml 
+          --substitutions=_CLUSTER=${{ secrets.GKE_CLUSTER_NAME }},_ZONE=${{ secrets.GKE_CLUSTER_ZONE }}
