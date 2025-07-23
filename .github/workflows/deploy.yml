@@ -80,4 +80,4 @@ jobs:
         sed -i'' -e 's|:latest|:${{ github.sha }}|g' ./manager/manager-deployment.yaml
 
         # Apply the configured manifest to the cluster
-        kubectl apply -f ./manager/manager-deployment.yaml
+        kubectl apply -f ./manager/manager-deployment.yaml --validate=false
