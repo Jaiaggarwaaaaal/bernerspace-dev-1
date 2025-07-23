@@ -61,7 +61,7 @@ jobs:
     - name: Deploy to GKE
       run: |
         # Get GKE credentials
-        gcloud container clusters get-credentials <YOUR_GKE_CLUSTER_NAME> --zone <YOUR_GKE_CLUSTER_ZONE>
+        gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER_NAME }} --zone ${{ secrets.GKE_CLUSTER_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
 
         # Use sed to replace placeholder values in the manifest with our secrets
         sed -i'' -e 's|<MANAGER_IMAGE_REGISTRY_URL>|${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
