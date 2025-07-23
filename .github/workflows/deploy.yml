@@ -71,3 +71,4 @@ jobs:
           --config=cloudbuild.yaml \
           --substitutions=_ZONE=${{ env.GKE_CLUSTER_ZONE }},_CLUSTER=${{ env.GKE_CLUSTER_NAME }} 
           --substitutions="_CLUSTER=${{ secrets.GKE_CLUSTER_NAME }},_ZONE=${{ secrets.GKE_CLUSTER_ZONE }}"
+
