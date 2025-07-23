@@ -109,7 +109,7 @@ kubectl apply -f manager/deployment.yaml
 
 ## Application Requirements
 
-When developing applications to be deployed by this manager, ensure your application is configured to listen on port `8000`. The Kubernetes Service template (`manager/templates/service.yaml`) is configured to route traffic to this port. For example, if using Uvicorn with FastAPI, your application should be started with `uvicorn main:app --host 0.0.0.0 --port 8000`.
+When developing applications to be deployed by this manager, ensure your application is configured to listen on port `8080`. The Kubernetes Service template (`manager/templates/service.yaml`) is configured to route traffic to this port. For example, if using Uvicorn with FastAPI, your application should be started with `uvicorn main:app --host 0.0.0.0 --port 8080`.
 
 ## Built With
 
