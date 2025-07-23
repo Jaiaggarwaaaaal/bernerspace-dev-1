@@ -6,9 +6,10 @@ on:
   push:
     branches:
       - main
-      - deploy # Trigger the workflow on pushes to main or deploy
+      - deploy
     paths:
-      - 'manager/**' # Only run if files inside the 'manager/' directory change
+      - 'manager/**'
+      - '.github/workflows/**' # Also run if the workflow file itself changes
 
 env:
   # Define environment variables that are not secret
