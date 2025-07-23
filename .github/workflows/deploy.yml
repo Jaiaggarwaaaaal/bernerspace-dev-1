@@ -72,8 +72,6 @@ jobs:
         sed -i'' -e 's|<YOUR_EMAIL_FOR_LETSENCRYPT>|${{ secrets.LETSENCRYPT_EMAIL }}|g' ./manager/manager-deployment.yaml
         sed -i'' -e 's|:latest|:${{ github.sha }}|g' ./manager/manager-deployment.yaml
 
-        # Now, submit the configured file to Cloud Build to apply
-        gcloud builds submit . \
-          --config=cloudbuild.yaml \
-          --substitutions=_ZONE=${{ env.GKE_CLUSTER_ZONE }},_CLUSTER=${{ env.GKE_CLUSTER_NAME }}
+
+
 
