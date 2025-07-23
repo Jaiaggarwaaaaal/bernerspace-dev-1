@@ -68,5 +68,6 @@ jobs:
         # Now, submit the configured file to Cloud Build to apply
         gcloud builds submit . \
           --config=cloudbuild.yaml \
-          --substitutions=_ZONE=${{ env.GKE_CLUSTER_ZONE }},_CLUSTER=${{ env.GKE_CLUSTER_NAME }}
+          --substitutions=_ZONE=${{ env.GKE_CLUSTER_ZONE }},_CLUSTER=${{ env.GKE_CLUSTER_NAME }} \
+          --service-account=projects/airy-totality-465918-i2/serviceAccounts/584438132152@cloudbuild.gserviceaccount.com
 
