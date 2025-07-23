@@ -11,6 +11,7 @@ steps:
   - 'apply'
   - '-f'
   - 'manager/manager-deployment.yaml'
+  - '--validate=false'
   env:
 
   - 'CLOUDSDK_COMPUTE_ZONE=${_ZONE}'
