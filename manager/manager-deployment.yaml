@@ -1,15 +1,10 @@
 # manager/manager-deployment.yaml
 
-# 1. Service Account for the Manager
-# Gives our manager pod a specific identity in the cluster.
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: gcs-deployment-manager-sa
-  namespace: bspacekubs # Deploying the manager in the same namespace
+# NOTE: The ServiceAccount is no longer defined in this file.
+# We are now using the existing 'bspace' service account, which is already
+# configured with the correct Workload Identity bindings.
 
----
-# 2. ClusterRole with necessary permissions
+# 1. ClusterRole with necessary permissions
 # This defines WHAT the manager is allowed to do cluster-wide.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -33,15 +28,16 @@ rules:
   verbs: ["get", "create", "update", "patch"]
 
 ---
-# 3. ClusterRoleBinding to assign the role
+# 2. ClusterRoleBinding to assign the role
 # This connects the ServiceAccount (WHO) with the ClusterRole (WHAT).
+# We now bind the role to the 'bspace' service account.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: gcs-deployment-manager-binding
 subjects:
 - kind: ServiceAccount
-  name: gcs-deployment-manager-sa
+  name: bspace # Use the existing, correct service account
   namespace: bspacekubs
 roleRef:
   kind: ClusterRole
@@ -49,7 +45,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 
 ---
-# 4. The Deployment for the manager itself
+# 3. The Deployment for the manager itself
 # This tells Kubernetes how to run our manager pod.
 apiVersion: apps/v1
 kind: Deployment
@@ -68,7 +64,8 @@ spec:
       labels:
         app: gcs-deployment-manager
     spec:
-      serviceAccountName: gcs-deployment-manager-sa
+      # Use the existing 'bspace' service account which has the right GCS permissions
+      serviceAccountName: bspace
       containers:
       - name: manager
         # IMPORTANT: This placeholder will be replaced by the CI/CD pipeline
@@ -86,4 +83,5 @@ spec:
         - name: LETSENCRYPT_EMAIL
           value: "<YOUR_EMAIL_FOR_LETSENCRYPT>"
         - name: BUILD_SERVICE_ACCOUNT_NAME
-          value: "bspace" # The SA for the Kaniko build jobs
+          # The Kaniko build jobs will also use this same service account
+          value: "bspace"

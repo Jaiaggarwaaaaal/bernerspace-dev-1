@@ -81,6 +81,7 @@ def init_k8s_clients():
 def find_dockerfile_path(blob):
     """
     Downloads a tarball and finds the path to the directory containing the Dockerfile.
+    Handles both .tar and .tar.gz files.
 
     Returns:
         str: The sub-path to the build context (e.g., '.') or None if not found.
@@ -89,7 +90,16 @@ def find_dockerfile_path(blob):
         try:
             logging.info(f"Searching for Dockerfile in '{blob.name}'...")
             blob.download_to_filename(temp_tar.name)
-            with tarfile.open(temp_tar.name, "r:gz") as tar:
+            
+            # Try opening as a gzipped tar, fall back to a regular tar
+            try:
+                tar = tarfile.open(temp_tar.name, "r:gz")
+                logging.info(f"Opened '{blob.name}' as a .tar.gz file.")
+            except tarfile.ReadError:
+                tar = tarfile.open(temp_tar.name, "r:")
+                logging.info(f"Opened '{blob.name}' as a .tar file.")
+
+            with tar:
                 members = tar.getmembers()
                 
                 # Search for Dockerfile at the root first
@@ -103,7 +113,6 @@ def find_dockerfile_path(blob):
 
                 # If not at root, search in immediate subdirectories
                 for member in members:
-                    # Path components: e.g., 'folder/Dockerfile' -> ['folder', 'Dockerfile']
                     path_parts = os.path.normpath(member.name).split(os.sep)
                     if len(path_parts) == 2 and path_parts[1] == 'Dockerfile' and member.isfile():
                         context_path = path_parts[0]
@@ -117,7 +126,7 @@ def find_dockerfile_path(blob):
                 return None
 
         except tarfile.ReadError:
-            logging.error(f"File '{blob.name}' is not a valid tar.gz file.")
+            logging.error(f"File '{blob.name}' is not a valid tar or tar.gz file.")
             return None
         except Exception as e:
             logging.error(f"Error validating tarball '{blob.name}': {e}")
@@ -127,12 +136,14 @@ def watch_gcs_bucket(gcs_client, k8s_clients):
     """Polls GCS for new .tar.gz files and triggers the build/deploy process."""
     processed_files = load_processed_files()
     logging.info(f"Loaded {len(processed_files)} previously processed files.")
-    logging.info("Starting GCS bucket watch for .tar.gz files...")
+    logging.info("Starting GCS bucket watch for .tar and .tar.gz files...")
     while True:
         try:
-            blobs = gcs_client.list_blobs(GCS_BUCKET_NAME, prefix="uploads/")
+            # Scan the entire bucket, not just the 'uploads/' prefix
+            blobs = gcs_client.list_blobs(GCS_BUCKET_NAME)
             for blob in blobs:
-                if blob.name.endswith('.tar.gz') and blob.name not in processed_files:
+                # Process both .tar and .tar.gz files
+                if blob.name.endswith(('.tar.gz', '.tar')) and blob.name not in processed_files:
                     logging.info(f"New file detected: '{blob.name}'.")
                     process_new_tarball(gcs_client, k8s_clients, blob, processed_files) # Pass the set
             time.sleep(POLL_INTERVAL_SECONDS)
@@ -141,25 +152,40 @@ def watch_gcs_bucket(gcs_client, k8s_clients):
             time.sleep(POLL_INTERVAL_SECONDS * 2)
 
 def process_new_tarball(gcs_client, k8s_clients, blob, processed_files):
-    """Orchestrates the build and deployment for a new .tar.gz file."""
-    # Extract app_name from the filename, e.g., "uploads/myapp.tar.gz" -> "myapp"
-    app_name = os.path.basename(blob.name).replace('.tar.gz', '').lower()
-    logging.info(f"Processing app: {app_name}")
+    """Orchestrates the build and deployment for a new tarball."""
+    # Derive app_name and app_version from the GCS object path.
+    path_parts = blob.name.split('/')
+    
+    # Determine the version string by removing extensions
+    base_name = os.path.basename(blob.name)
+    if base_name.endswith('.tar.gz'):
+        version_str = base_name[:-7] # len('.tar.gz')
+    else:
+        version_str = base_name[:-4] # len('.tar')
+
+    if len(path_parts) > 1:
+        app_name = path_parts[0].lower()
+        app_version = version_str.lower()
+    else:
+        app_name = version_str.lower()
+        app_version = "latest"
+
+    logging.info(f"Processing app: {app_name}, version: {app_version}")
 
     try:
         # 1. Find the Dockerfile build context path
         context_sub_path = find_dockerfile_path(blob)
         if not context_sub_path:
             logging.error(f"Validation failed for '{blob.name}'. No Dockerfile found. Aborting.")
-            save_processed_file(blob.name) # Mark as processed to avoid retries
+            save_processed_file(blob.name)
             processed_files.add(blob.name)
             return
 
         # 2. The uploaded tarball is the build context.
         context_gcs_uri = f"gs://{GCS_BUCKET_NAME}/{blob.name}"
         
-        # 3. Create Kaniko Build Job
-        destination_image = f"{CONTAINER_REGISTRY_URL}/{app_name}:latest"
+        # 3. Create Kaniko Build Job with a versioned image tag
+        destination_image = f"{CONTAINER_REGISTRY_URL}/{app_name}:{app_version}"
         job_name = create_kaniko_job(k8s_clients["batch"], app_name, context_gcs_uri, destination_image, context_sub_path)
 
         # 4. Watch the build job for completion
@@ -168,18 +194,18 @@ def process_new_tarball(gcs_client, k8s_clients, blob, processed_files):
         # 5. Deploy on success
         if build_succeeded:
             logging.info(f"Build successful for '{app_name}'. Proceeding to deployment.")
-            deploy_application(k8s_clients, app_name, destination_image)
+            deploy_application(k8s_clients, app_name, app_version, destination_image)
             save_processed_file(blob.name)
             processed_files.add(blob.name)
             logging.info(f"Successfully processed and deployed '{app_name}'.")
         else:
             logging.error(f"Build job '{job_name}' failed. Deployment aborted.")
-            save_processed_file(blob.name) # Also save on build failure
+            save_processed_file(blob.name)
             processed_files.add(blob.name)
 
     except Exception as e:
         logging.error(f"An unexpected error occurred while processing '{app_name}': {e}")
-        save_processed_file(blob.name) # Mark as processed on any failure
+        save_processed_file(blob.name)
         processed_files.add(blob.name)
 
 

@@ -63,14 +63,28 @@ jobs:
         docker push ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
         docker push ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest
 
-    # 6. Deploy to Google Kubernetes Engine
-    - name: Deploy via gcs-k8s-deployment-manager
+    # 6. Set up GKE credentials
+    - name: Set up GKE credentials
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ secrets.GKE_CLUSTER_NAME }}
+        location: ${{ secrets.GKE_CLUSTER_ZONE }}
+
+    # 7. Deploy to Google Kubernetes Engine
+    - name: Deploy to GKE
       run: |
-        # First, substitute the placeholder values in the deployment manifest
+        echo "Updating deployment manifest with correct image tag and environment variables..."
+        # Substitute placeholder values
         sed -i'' -e 's|<MANAGER_IMAGE_REGISTRY_URL>|${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
         sed -i'' -e 's|<CONTAINER_REGISTRY_URL>|${{ secrets.CONTAINER_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
         sed -i'' -e 's|<YOUR_EMAIL_FOR_LETSENCRYPT>|${{ secrets.LETSENCRYPT_EMAIL }}|g' ./manager/manager-deployment.yaml
-        sed -i'' -e 's|:latest|:${{ github.sha }}|g' ./manager/manager-deployment.yaml
+
+        # Replace the general ':latest' tag with the specific git SHA for an immutable deployment
+        echo "Setting image tag to ${{ github.sha }}"
+        sed -i'' -e "s|image: ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest|image: ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" ./manager/manager-deployment.yaml
+
+        echo "Applying the manifest to the cluster..."
+        kubectl apply -f ./manager/manager-deployment.yaml
 
 
 
