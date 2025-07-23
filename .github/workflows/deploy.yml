@@ -46,6 +46,9 @@ jobs:
     - name: Configure Docker
       run: gcloud auth configure-docker ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}
 
+    - name: "VERIFY AUTH: Display authenticated user"
+      run: gcloud auth list
+
     # 4. Build the Docker image
     - name: Build Docker image
       run: |
