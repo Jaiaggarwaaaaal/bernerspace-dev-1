@@ -1,135 +1,126 @@
-# GCS to Kubernetes Deployment Manager
+# GCS-to-Kubernetes Deployment Manager
 
-This project is a Python-based deployment manager that automates the deployment of applications to a Kubernetes cluster from Google Cloud Storage (GCS). It continuously monitors a GCS bucket for new application packages (`.tar.gz` files), and upon detection, it triggers a build and deployment pipeline using Kaniko and Kubernetes.
-
-## Table of Contents
-
-- [GCS to Kubernetes Deployment Manager](#gcs-to-kubernetes-deployment-manager)
-  - [Table of Contents](#table-of-contents)
-  - [Overview](#overview)
-  - [Features](#features)
-  - [Prerequisites](#prerequisites)
-  - [Configuration](#configuration)
-  - [Usage](#usage)
-  - [Deployment](#deployment)
-  - [Built With](#built-with)
-
-## Overview
-
-The deployment manager is designed to streamline the process of deploying applications to Kubernetes. It watches a specified GCS bucket for new application packages. When a new package is uploaded, the manager automatically:
-
-1.  **Validates the package**: Checks for the presence of a `Dockerfile`.
-2.  **Builds a container image**: Uses Kaniko to build a Docker image from the application source code.
-3.  **Pushes the image to a container registry**: Stores the newly built image in a specified container registry.
-4.  **Deploys the application to Kubernetes**: Creates or updates the necessary Kubernetes resources (Deployment, Service, and Ingress) to run the application.
+This project implements a Kubernetes-native controller that automates the deployment of applications to a GKE cluster directly from Google Cloud Storage. It watches a GCS bucket for new application source code (in `.tar` or `.tar.gz` format), builds a Docker image using Kaniko, pushes it to a container registry, and deploys it using a set of predefined Kubernetes templates.
 
 ## Features
 
-- **Automated deployments**: Automatically deploys new applications from GCS to Kubernetes.
-- **Container image builds**: Uses Kaniko to build container images without requiring a Docker daemon.
-- **Kubernetes integration**: Manages Kubernetes resources (Deployments, Services, Ingresses) for the application.
-- **Scalable**: Can be configured to watch multiple applications and environments.
-- **Extensible**: Can be extended to support other application packaging formats and deployment strategies.
+- **GitOps-style Trigger**: Deploy applications by simply uploading a tarball to a GCS bucket.
+- **Automated Builds**: Uses Kaniko to build container images from a `Dockerfile` within your source code, without needing a Docker daemon.
+- **Dynamic Naming**: The application name and version are derived directly from the GCS file path (e.g., `my-app/v1.2.tar` becomes application `my-app` with version `v1.2`).
+- **Templated Deployments**: Creates `Deployment`, `Service`, and `Ingress` resources from standardized templates.
+- **Automatic SSL**: Integrates with `cert-manager` to automatically provision and manage SSL certificates for deployed applications.
+- **Secure**: Leverages GKE Workload Identity for secure, keyless authentication between the manager and other Google Cloud services.
+
+## Architecture
+
+The deployment process follows these steps:
+
+1.  A user uploads an application tarball to the configured GCS bucket (e.g., `gs://<your-bucket>/my-fastapi-app/v1.0.tar`).
+2.  The `gcs-deployment-manager` pod, which is constantly polling the bucket, detects the new file.
+3.  The manager extracts the application name (`my-fastapi-app`) and version (`v1.0`) from the file path.
+4.  It creates a Kubernetes `Job` to run a Kaniko build pod.
+5.  The Kaniko pod fetches the tarball from GCS, builds the Docker image using the `Dockerfile` found inside, and pushes the final image to the configured container registry with the tag `my-fastapi-app:v1.0`.
+6.  The manager pod monitors the build `Job`. Upon successful completion, it proceeds to the deployment phase.
+7.  Using templates, it generates manifests for a `Deployment`, `Service`, and `Ingress`.
+8.  It applies these manifests to the cluster, creating the necessary resources to run the application and expose it to the internet.
+9.  The `cert-manager` installation detects the new `Ingress` and automatically obtains a TLS certificate for its domain.
+
+```
++----------------+      +----------------------+      +-------------------------+
+|   User / CI    |----->|      GCS Bucket      |----->| gcs-deployment-manager  |
++----------------+  1.  +----------------------+  2.  +-------------------------+
+     Uploads Tarball      New file detected           (Pod running in GKE)
+                                                                 | 3. Creates Job
+                                                                 v
+                                                     +-------------------------+
+                                                     |      Kaniko Build Job   |
+                                                     +-------------------------+
+                                                                 | 4. Pushes Image
+                                                                 v
+                                                     +-------------------------+
+                                                     |  Container Registry     |
+                                                     +-------------------------+
+                                                                 | 5. Reports Success
+                                                                 v
++-------------------------+      +-------------------------+      +-------------------------+
+| Ingress                 |<-----| Service                 |<-----| Deployment              |
++-------------------------+  8.  +-------------------------+  7.  +-------------------------+
+  (Exposes App via HTTPS)        (Routes traffic)                 (Runs App Pod)
+```
 
 ## Prerequisites
 
-Before you begin, ensure you have the following:
+- A Google Kubernetes Engine (GKE) cluster with **Workload Identity enabled**.
+- A Google Cloud Storage (GCS) bucket.
+- A container registry (e.g., Google Artifact Registry).
+- A configured domain name pointing to the IP address of your GKE cluster's Ingress controller.
+- `cert-manager` installed on your cluster.
+- A Google Service Account (GSA) with the following IAM roles:
+  - **Storage Object Viewer** (`roles/storage.objectViewer`): To read files from the GCS bucket.
+  - **Artifact Registry Writer** (`roles/artifactregistry.writer`): To push container images.
+  - **Kubernetes Engine Developer** (`roles/container.developer`): To manage Kubernetes resources.
+  - **Service Account User** (`roles/iam.serviceAccountUser`): To allow the GKE service account to impersonate the GSA.
+  - **Workload Identity User** (`roles/iam.workloadIdentityUser`): To link the GSA to the Kubernetes Service Account.
 
-- A Google Cloud Platform (GCP) project with the following APIs enabled:
-  - Google Cloud Storage API
-  - Google Kubernetes Engine API
-- A GCS bucket to store your application packages.
-- A container registry (e.g., Google Container Registry) to store your container images.
-- A running Kubernetes cluster.
-- `kubectl` configured to connect to your Kubernetes cluster.
+## Setup
 
-## Configuration
+1.  **Clone the Repository**:
+    ```bash
+    git clone <repository-url>
+    cd gcs-k8s-deployment-manager
+    ```
 
-The deployment manager is configured using environment variables. Create a `.env` file in the `manager` directory with the following variables:
+2.  **Configure Service Accounts**:
+    - Ensure your Google Service Account (GSA) has the required permissions (see Prerequisites).
+    - Link the GSA to the Kubernetes Service Account (KSA) that the manager will use (`bspace` in the `bspacekubs` namespace by default).
+    ```bash
+    gcloud iam service-accounts add-iam-policy-binding \
+      --role="roles/iam.workloadIdentityUser" \
+      --member="serviceAccount:<your-project-id>.svc.id.goog[bspacekubs/bspace]" \
+      <your-gsa-email>
+    ```
 
-```
-GCS_BUCKET_NAME="your-gcs-bucket-name"
-CONTAINER_REGISTRY_URL="your-container-registry-url"
-K8S_NAMESPACE="your-kubernetes-namespace"
-BUILD_SERVICE_ACCOUNT_NAME="your-build-service-account"
+3.  **Configure Deployment Files**:
+    - **`manager/manager-deployment.yaml`**: This file defines the manager's deployment, roles, and service account usage. It is pre-configured to use a KSA named `bspace`. Ensure the RBAC roles meet your security requirements.
+    - **`manager/templates/`**: Review the `deployment.yaml`, `service.yaml`, and `ingress.yaml` templates. Crucially, ensure the `targetPort` in `service.yaml` matches the port your applications will listen on (e.g., `8080` for FastAPI/Uvicorn).
 
-# --- Domain and Certificate Configuration ---
-# IMPORTANT: This project is configured to deploy applications as subdomains
-# of ideabrowse.com. You must use this domain name.
-DOMAIN_NAME="ideabrowse.com"
-LETSENCRYPT_EMAIL="your-personal-email@example.com"
-```
+4.  **Configure CI/CD Secrets**:
+    - In your GitHub repository, go to `Settings > Secrets and variables > Actions` and create secrets for the values used in `.github/workflows/deploy.yml`, such as `GCP_CREDENTIALS`, `GKE_CLUSTER_NAME`, `CONTAINER_REGISTRY_URL`, etc.
 
-- `GCS_BUCKET_NAME`: The name of the GCS bucket where you will upload your application source code.
-- `CONTAINER_REGISTRY_URL`: The URL of the container registry where your application images will be stored.
-- `K8S_NAMESPACE`: The Kubernetes namespace where your applications will be deployed.
-- `BUILD_SERVICE_ACCOUNT_NAME`: The name of the Kubernetes service account to use for the build job.
-- **`DOMAIN_NAME`**: **This value must be `ideabrowse.com`**. The system is designed to create a unique subdomain for your application under this primary domain (e.g., `your-app-name.ideabrowse.com`).
-- **`LETSENCRYPT_EMAIL`**: **Your personal email address**. Let's Encrypt will use this to send you important renewal notices for your application's specific subdomain certificate. This is critical for maintaining your application's security.
+5.  **Deploy the Manager**:
+    - Pushing changes to the `main` or `deploy` branch will trigger the GitHub Actions workflow.
+    - The workflow builds the manager's Docker image, pushes it to your registry, and applies the `manager/manager-deployment.yaml` manifest to your cluster.
 
 ## Usage
 
-To run the deployment manager, you need to have Python and the required dependencies installed.
+To deploy a new application:
 
-1.  **Install the dependencies**:
+1.  **Prepare Your Application**:
+    - Your application source code **must** contain a valid `Dockerfile` at its root.
+    - Ensure your application is configured to listen on the port specified in the `service.yaml` template (e.g., `8080`), keep your code port 8080 by default to use this with our cli
 
-```
-pip install -r manager/requirements.txt
-```
+2.  **Create a Tarball**:
+    - Create a `.tar` or `.tar.gz` archive of your application's source code.
+    ```bash
+    tar -cvf my-app/v1.0.tar .
+    # or
+    tar -zcvf my-app/v1.0.tar.gz .
+    ```
 
-2.  **Run the deployment manager**:
+3.  **Upload to GCS**:
+    - Upload the file to your GCS bucket using the required path structure: `<app-name>/<version>.<ext>`.
+    ```bash
+    gsutil cp my-app/v1.0.tar gs://<your-bucket>/my-app/v1.0.tar
+    ```
+    - The manager will automatically detect the new file and begin the build and deploy process.
 
-```
-python manager/main.py
-```
+4.  **Verify Deployment**:
+    - You can watch the process in your cluster:
+    ```bash
+    # See the build job get created, and then your application pod
+    kubectl get pods -n bspacekubs -w
 
-The deployment manager will start watching the specified GCS bucket for new application packages.
-
-## Deployment
-
-To deploy the deployment manager to your Kubernetes cluster, you can use the provided `deployment.yaml` file as a template. You will need to build a Docker image for the deployment manager and push it to your container registry.
-
-1.  **Build the Docker image**:
-
-```
-docker build -t your-container-registry-url/gcs-to-k8s-deployment-manager:latest .
-```
-
-2.  **Push the Docker image**:
-
-```
-docker push your-container-registry-url/gcs-to-k8s-deployment-manager:latest
-```
-
-3.  **Deploy to Kubernetes**:
-
-```
-kubectl apply -f manager/deployment.yaml
-```
-
-## Application Requirements
-
-When developing applications to be deployed by this manager, ensure your application is configured to listen on port `8080`. The Kubernetes Service template (`manager/templates/service.yaml`) is configured to route traffic to this port. For example, if using Uvicorn with FastAPI, your application should be started with `uvicorn main:app --host 0.0.0.0 --port 8080`.
-
-## Built With
-
-- [Python](https://www.python.org/)
-- [Google Cloud Storage](https://cloud.google.com/storage)
-- [Kubernetes](https://kubernetes.io/)
-- [Kaniko](https://github.com/GoogleContainerTools/kaniko)
-- [Docker](https://www.docker.com/)
-
-## Creating Application Archives
-
-For the deployment manager to correctly process your application, you must package it as a `.tar.gz` file. The archive should have a "flat" structure, meaning the `Dockerfile` and all other source files are at the root of the archive, not inside a subdirectory.
-
-If your project is in a directory (e.g., `my-app`), you can create the archive with the following command:
-
-```bash
-tar -czf my-app.tar.gz -C my-app .
-```
-
-This command does the following:
-- `tar -czf my-app.tar.gz`: Creates a gzipped tarball named `my-app.tar.gz`.
-- `-C my-app`: Changes to the `my-app` directory before adding files.
-- `.`: Adds all files and folders from the current directory (which is now `my-app`) to the root of the archive.
+    # Check for the final deployed resources
+    kubectl get deployment,service,ingress -n bspacekubs
+    ```
+    - Once the `Ingress` is available and the certificate is ready, your application will be accessible at `https://<app-name>-<version>.<your-domain.com>`.
