@@ -67,8 +67,8 @@ jobs:
         sed -i'' -e 's|:latest|:${{ github.sha }}|g' ./manager/manager-deployment.yaml
 
         # Now, submit the configured file to Cloud Build to apply
-        gcloud builds submit . \
-          --config=cloudbuild.yaml \
+        gcloud builds submit . 
+          --config=cloudbuild.yaml 
           --substitutions=_ZONE=${{ env.GKE_CLUSTER_ZONE }},_CLUSTER=${{ env.GKE_CLUSTER_NAME }} 
           --substitutions="_CLUSTER=${{ secrets.GKE_CLUSTER_NAME }},_ZONE=${{ secrets.GKE_CLUSTER_ZONE }}"
 
