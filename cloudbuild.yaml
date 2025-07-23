@@ -1,20 +1,9 @@
 # manager/cloudbuild.yaml
 steps:
 - name: 'gcr.io/cloud-builders/gcloud'
-  args: ['container', 'clusters', 'get-credentials', '${_CLUSTER}', '--zone=${_ZONE}', '--project=${PROJECT_ID}']
-  env:
-  - 'CLOUDSDK_COMPUTE_ZONE=${_ZONE}'
-  - 'CLOUDSDK_CONTAINER_CLUSTER=${_CLUSTER}'
-- name: 'gcr.io/cloud-builders/kubectl'
   entrypoint: bash
   args:
   - '-c'
-  - 'kubectl config view'
-- name: 'gcr.io/cloud-builders/kubectl'
-  args:
-  - 'apply'
-  - '-f'
-  - 'manager/manager-deployment.yaml'
-
-
-
+  - |
+    gcloud container clusters get-credentials "${_CLUSTER}" --zone="${_ZONE}" --project="${PROJECT_ID}"
+    kubectl apply -f manager/manager-deployment.yaml
