@@ -14,5 +14,5 @@ steps:
   - 'CLOUDSDK_COMPUTE_ZONE=${_ZONE}'
   - 'CLOUDSDK_CONTAINER_CLUSTER=${_CLUSTER}'
 
-serviceAccount: projects/airy-totality-465918-i2/serviceAccounts/584438132152@cloudbuild.gserviceaccount.com
+
 
