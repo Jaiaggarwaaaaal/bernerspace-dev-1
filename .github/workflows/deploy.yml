@@ -18,6 +18,10 @@ jobs:
   build-and-deploy:
     name: Build and Deploy to GKE
     runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write' # Required to authenticate to GCP with Workload Identity Federation
+
 
     steps:
     - name: "DEBUG: Print repository name"
