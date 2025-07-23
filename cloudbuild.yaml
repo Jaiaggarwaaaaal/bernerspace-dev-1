@@ -9,7 +9,7 @@ steps:
   entrypoint: bash
   args:
   - '-c'
-  - 'echo "KUBECONFIG: $KUBECONFIG" && kubectl config view'
+  - 'kubectl config view'
 - name: 'gcr.io/cloud-builders/kubectl'
   args:
   - 'apply'
