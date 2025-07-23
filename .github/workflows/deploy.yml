@@ -38,8 +38,11 @@ jobs:
       with:
         credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
 
-    - name: Configure Docker
-      run: gcloud auth configure-docker ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}
+    - name: "VERIFY AUTH: Display authenticated user"
+      run: gcloud auth list
+
+    - name: Docker Login
+      run: gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}
 
     # 4. Build the Docker image
     - name: Build Docker image
