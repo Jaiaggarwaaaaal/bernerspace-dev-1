@@ -60,8 +60,8 @@ jobs:
     # 6. Deploy to Google Kubernetes Engine
     - name: Deploy to GKE
       run: |
-        # Install the GKE auth plugin
-        gcloud components install gke-gcloud-auth-plugin
+        # Install the GKE auth plugin using apt-get
+        sudo apt-get install -y google-cloud-cli-gke-gcloud-auth-plugin
 
         # Get GKE credentials
         gcloud container clusters get-credentials ${{ secrets.GKE_CLUSTER_NAME }} --zone ${{ secrets.GKE_CLUSTER_ZONE }} --project ${{ secrets.GCP_PROJECT_ID }}
