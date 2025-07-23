@@ -1,18 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: "{{APP_NAME}}"
+  name: "{{APP_NAME}}-{{APP_VERSION}}"
   labels:
     app: "{{APP_NAME}}"
+    version: "{{APP_VERSION}}"
 spec:
   replicas: 1
   selector:
     matchLabels:
       app: "{{APP_NAME}}"
+      version: "{{APP_VERSION}}"
   template:
     metadata:
       labels:
         app: "{{APP_NAME}}"
+        version: "{{APP_VERSION}}"
     spec:
       containers:
       - name: "{{APP_NAME}}"
@@ -26,7 +29,6 @@ spec:
           limits:
             memory: "64Mi"
             cpu: "250m"
-            # Example of adding you code .env
         env:
         - name: "WEATHER_API_KEY"
           value: "<YOUR_WEATHER_API_KEY>"

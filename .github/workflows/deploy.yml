@@ -1,0 +1,91 @@
+# .github/workflows/deploy.yml
+
+name: Build and Deploy Manager
+
+on:
+  push:
+    branches:
+      - main
+      - deploy
+
+env:
+  # Define environment variables that are not secret
+  IMAGE_NAME: gcs-k8s-deployment-manager
+  GKE_CLUSTER_NAME: ${{ secrets.GKE_CLUSTER_NAME }}
+  GKE_CLUSTER_ZONE: ${{ secrets.GKE_CLUSTER_ZONE }}
+  CONTAINER_REGISTRY_URL: ${{ secrets.CONTAINER_REGISTRY_URL }}
+  GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+  GCS_BUCKET_NAME: ${{ secrets.GCS_BUCKET_NAME }}
+  LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
+  MANAGER_IMAGE_REGISTRY_URL: ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}
+  PROJECT_ID: ${{ secrets.PROJECT_ID }}
+  GCP_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy to GKE
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write' # Required to authenticate to GCP with Workload Identity Federation
+
+
+    steps:
+    - name: "DEBUG: Print repository name"
+      run: echo "The exact repository name is ${{ github.repository }}"
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # 1. Authenticate to Google Cloud using Workload Identity Federation (most secure)
+    - name: Authenticate to Google Cloud
+      id: auth
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+    - name: "VERIFY AUTH: Display authenticated user"
+      run: gcloud auth list
+
+    - name: Docker Login
+      run: gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}
+
+    # 4. Build the Docker image
+    - name: Build Docker image
+      run: |
+        docker build -t ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+                     -t ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest \
+                     ./manager
+
+    # 5. Push the Docker image to the registry
+    - name: Push Docker image
+      run: |
+        docker push ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        docker push ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest
+
+    # 6. Set up GKE credentials
+    - name: Set up GKE credentials
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ secrets.GKE_CLUSTER_NAME }}
+        location: ${{ secrets.GKE_CLUSTER_ZONE }}
+
+    # 7. Deploy to Google Kubernetes Engine
+    - name: Deploy to GKE
+      run: |
+        echo "Updating deployment manifest with correct image tag and environment variables..."
+        # Substitute placeholder values
+        sed -i'' -e 's|<MANAGER_IMAGE_REGISTRY_URL>|${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
+        sed -i'' -e 's|<CONTAINER_REGISTRY_URL>|${{ secrets.CONTAINER_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
+        sed -i'' -e 's|<YOUR_EMAIL_FOR_LETSENCRYPT>|${{ secrets.LETSENCRYPT_EMAIL }}|g' ./manager/manager-deployment.yaml
+
+        # Replace the general ':latest' tag with the specific git SHA for an immutable deployment
+        echo "Setting image tag to ${{ github.sha }}"
+        sed -i'' -e "s|image: ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest|image: ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" ./manager/manager-deployment.yaml
+
+        echo "Applying the manifest to the cluster..."
+        kubectl apply -f ./manager/manager-deployment.yaml
+
+
+
+
