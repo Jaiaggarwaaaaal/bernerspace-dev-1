@@ -5,12 +5,6 @@ steps:
   env:
   - 'CLOUDSDK_COMPUTE_ZONE=${_ZONE}'
   - 'CLOUDSDK_CONTAINER_CLUSTER=${_CLUSTER}'
-- name: 'gcr.io/cloud-builders/gcloud'
-  entrypoint: gcloud
-  args:
-  - 'auth'
-  - 'activate-service-account'
-  - '584438132152@cloudbuild.gserviceaccount.com'
 - name: 'gcr.io/cloud-builders/kubectl'
   args:
   - 'apply'
