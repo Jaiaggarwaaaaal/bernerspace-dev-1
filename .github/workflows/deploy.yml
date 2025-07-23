@@ -1,0 +1,69 @@
+# .github/workflows/deploy.yml
+
+name: Build and Deploy Manager
+
+on:
+  push:
+    branches:
+      - main
+      - deploy # Trigger the workflow on pushes to main or deploy
+    paths:
+      - 'manager/**' # Only run if files inside the 'manager/' directory change
+
+env:
+  # Define environment variables that are not secret
+  IMAGE_NAME: gcs-k8s-deployment-manager
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy to GKE
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # 1. Authenticate to Google Cloud using Workload Identity Federation (most secure)
+    - id: 'auth'
+      name: 'Authenticate to Google Cloud'
+      uses: 'google-github-actions/auth@v1'
+      with:
+        credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+    # 2. Set up Google Cloud SDK
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+
+    # 3. Configure Docker to use the gcloud credential helper
+    - name: Configure Docker
+      run: gcloud auth configure-docker ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}
+
+    # 4. Build the Docker image
+    - name: Build Docker image
+      run: |
+        docker build -t ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+                     -t ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest \
+                     ./manager
+
+    # 5. Push the Docker image to the registry
+    - name: Push Docker image
+      run: |
+        docker push ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        docker push ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest
+
+    # 6. Deploy to Google Kubernetes Engine
+    - name: Deploy to GKE
+      run: |
+        # Get GKE credentials
+        gcloud container clusters get-credentials <YOUR_GKE_CLUSTER_NAME> --zone <YOUR_GKE_CLUSTER_ZONE>
+
+        # Use sed to replace placeholder values in the manifest with our secrets
+        sed -i'' -e 's|<MANAGER_IMAGE_REGISTRY_URL>|${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
+        sed -i'' -e 's|<CONTAINER_REGISTRY_URL>|${{ secrets.CONTAINER_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
+        sed -i'' -e 's|<YOUR_EMAIL_FOR_LETSENCRYPT>|${{ secrets.LETSENCRYPT_EMAIL }}|g' ./manager/manager-deployment.yaml
+        
+        # Also update the image tag to the specific commit SHA for precise versioning
+        sed -i'' -e 's|:latest|:${{ github.sha }}|g' ./manager/manager-deployment.yaml
+
+        # Apply the configured manifest to the cluster
+        kubectl apply -f ./manager/manager-deployment.yaml

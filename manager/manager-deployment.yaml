@@ -1,0 +1,87 @@
+# manager/manager-deployment.yaml
+
+# 1. Service Account for the Manager
+# Gives our manager pod a specific identity in the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gcs-deployment-manager-sa
+  namespace: bspacekubs # Deploying the manager in the same namespace
+
+---
+# 2. ClusterRole with necessary permissions
+# This defines WHAT the manager is allowed to do cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gcs-deployment-manager-role
+rules:
+- apiGroups: [""]
+  resources: ["services", "pods", "pods/log"]
+  verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["create", "get", "list", "watch", "patch", "update", "delete"]
+- apiGroups: ["cert-manager.io"]
+  resources: ["clusterissuers"]
+  verbs: ["get", "create", "update", "patch"]
+
+---
+# 3. ClusterRoleBinding to assign the role
+# This connects the ServiceAccount (WHO) with the ClusterRole (WHAT).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gcs-deployment-manager-binding
+subjects:
+- kind: ServiceAccount
+  name: gcs-deployment-manager-sa
+  namespace: bspacekubs
+roleRef:
+  kind: ClusterRole
+  name: gcs-deployment-manager-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 4. The Deployment for the manager itself
+# This tells Kubernetes how to run our manager pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gcs-deployment-manager
+  namespace: bspacekubs
+  labels:
+    app: gcs-deployment-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gcs-deployment-manager
+  template:
+    metadata:
+      labels:
+        app: gcs-deployment-manager
+    spec:
+      serviceAccountName: gcs-deployment-manager-sa
+      containers:
+      - name: manager
+        # IMPORTANT: This placeholder will be replaced by the CI/CD pipeline
+        image: <MANAGER_IMAGE_REGISTRY_URL>/gcs-k8s-deployment-manager:latest
+        env:
+        # This is the registry for USER APPLICATIONS built by Kaniko
+        - name: CONTAINER_REGISTRY_URL
+          value: "<CONTAINER_REGISTRY_URL>"
+        - name: K8S_NAMESPACE
+          value: "bspacekubs"
+        - name: DOMAIN_NAME
+          value: "ideabrowse.com" # Or your actual domain
+        - name: LETSENCRYPT_EMAIL
+          value: "<YOUR_EMAIL_FOR_LETSENCRYPT>"
+        - name: BUILD_SERVICE_ACCOUNT_NAME
+          value: "bspace" # The SA for the Kaniko build jobs

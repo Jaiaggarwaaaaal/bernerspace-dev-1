@@ -296,60 +296,65 @@ def init_k8s_clients():
 
 # ... (previous code) ...
 
-def deploy_application(k8s_clients, app_name, image_name):
+def deploy_application(k8s_clients, app_name, app_version, image_name):
     """Deploys an application using templates from the 'templates' directory."""
-    logging.info(f"Deploying application '{app_name}' with image '{image_name}'.")
+    logging.info(f"Deploying application '{app_name}:{app_version}' with image '{image_name}'.")
     
+    resource_name = f"{app_name}-{app_version}"
+
     # Process Deployment
     try:
         deployment_template_path = get_template_path("deployment.yaml")
         with open(deployment_template_path) as f:
             deployment_manifest_str = f.read().replace("{{APP_NAME}}", app_name)
+            deployment_manifest_str = deployment_manifest_str.replace("{{APP_VERSION}}", app_version)
             deployment_manifest_str = deployment_manifest_str.replace("{{IMAGE_NAME}}", image_name)
             deployment_manifest = yaml.safe_load(deployment_manifest_str)
         
         try:
-            k8s_clients["apps"].read_namespaced_deployment(name=app_name, namespace=K8S_NAMESPACE)
-            logging.info(f"Deployment '{app_name}' already exists. Patching with new image.")
+            k8s_clients["apps"].read_namespaced_deployment(name=resource_name, namespace=K8S_NAMESPACE)
+            logging.info(f"Deployment '{resource_name}' already exists. Patching with new image.")
             k8s_clients["apps"].patch_namespaced_deployment(
-                name=app_name,
+                name=resource_name,
                 namespace=K8S_NAMESPACE,
                 body=deployment_manifest,
             )
         except client.ApiException as e:
             if e.status == 404:
-                logging.info(f"Deployment for '{app_name}' not found. Creating new one.")
+                logging.info(f"Deployment for '{resource_name}' not found. Creating new one.")
                 k8s_clients["apps"].create_namespaced_deployment(
                     namespace=K8S_NAMESPACE, body=deployment_manifest
                 )
             else:
                 raise
-        logging.info(f"Deployment '{app_name}' created/updated.")
+        logging.info(f"Deployment '{resource_name}' created/updated.")
 
     except Exception as e:
-        logging.error(f"Error processing deployment for '{app_name}': {e}")
+        logging.error(f"Error processing deployment for '{resource_name}': {e}")
         raise
 
     # Process Service
     try:
         service_template_path = get_template_path("service.yaml")
         with open(service_template_path) as f:
-            service_manifest = yaml.safe_load(f.read().replace("{{APP_NAME}}", app_name))
+            service_manifest_str = f.read().replace("{{APP_NAME}}", app_name)
+            service_manifest_str = service_manifest_str.replace("{{APP_VERSION}}", app_version)
+            service_manifest = yaml.safe_load(service_manifest_str)
         
         try:
-            k8s_clients["core"].read_namespaced_service(name=app_name, namespace=K8S_NAMESPACE)
-            logging.info(f"Service '{app_name}' already exists. No changes needed.")
+            k8s_clients["core"].read_namespaced_service(name=resource_name, namespace=K8S_NAMESPACE)
+            logging.info(f"Service '{resource_name}' already exists. No changes needed.")
         except client.ApiException as e:
             if e.status == 404:
-                logging.info(f"Service for '{app_name}' not found. Creating new one.")
+                logging.info(f"Service for '{resource_name}' not found. Creating new one.")
                 k8s_clients["core"].create_namespaced_service(
                     namespace=K8S_NAMESPACE, body=service_manifest
                 )
-                logging.info(f"Service '{app_name}' created.")
+                logging.info(f"Service '{resource_name}' created.")
             else:
                 raise
     except Exception as e:
-        logging.error(f"Error processing service for '{app_name}': {e}")
+        logging.error(f"Error processing service for '{resource_name}': {e}")
         raise
 
     # Process Ingress
@@ -362,29 +367,31 @@ def deploy_application(k8s_clients, app_name, image_name):
         ingress_template_path = get_template_path("ingress.yaml")
         with open(ingress_template_path) as f:
             ingress_manifest_str = f.read().replace("{{APP_NAME}}", app_name)
+            ingress_manifest_str = ingress_manifest_str.replace("{{APP_VERSION}}", app_version)
             ingress_manifest_str = ingress_manifest_str.replace("YOUR_DOMAIN.COM", domain_name)
             ingress_manifest = yaml.safe_load(ingress_manifest_str)
 
+        ingress_name = f"{app_name}-{app_version}-ingress"
         try:
-            k8s_clients["networking"].read_namespaced_ingress(name=f"{app_name}-ingress", namespace=K8S_NAMESPACE)
-            logging.info(f"Ingress for '{app_name}' already exists. Patching.")
+            k8s_clients["networking"].read_namespaced_ingress(name=ingress_name, namespace=K8S_NAMESPACE)
+            logging.info(f"Ingress for '{resource_name}' already exists. Patching.")
             k8s_clients["networking"].patch_namespaced_ingress(
-                name=f"{app_name}-ingress",
+                name=ingress_name,
                 namespace=K8S_NAMESPACE,
                 body=ingress_manifest
             )
         except client.ApiException as e:
             if e.status == 404:
-                logging.info(f"Ingress for '{app_name}' not found. Creating new one.")
+                logging.info(f"Ingress for '{resource_name}' not found. Creating new one.")
                 k8s_clients["networking"].create_namespaced_ingress(
                     namespace=K8S_NAMESPACE, body=ingress_manifest
                 )
             else:
                 raise
-        logging.info(f"Ingress for '{app_name}' created/updated.")
+        logging.info(f"Ingress for '{resource_name}' created/updated.")
 
     except Exception as e:
-        logging.error(f"Error processing ingress for '{app_name}': {e}")
+        logging.error(f"Error processing ingress for '{resource_name}': {e}")
         raise
 
 # ... (rest of the code) ...
