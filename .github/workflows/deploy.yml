@@ -7,9 +7,6 @@ on:
     branches:
       - main
       - deploy
-    paths:
-      - 'manager/**'
-      - '.github/workflows/**' # Also run if the workflow file itself changes
 
 env:
   # Define environment variables that are not secret
