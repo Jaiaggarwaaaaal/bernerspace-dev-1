@@ -4,7 +4,7 @@ steps:
   args:
   - 'apply'
   - '-f'
-  - './manager/manager-deployment.yaml'
+  - 'manager/manager-deployment.yaml'
   # The substitutions are automatically provided by the gcloud builds submit command
   env:
   - 'CLOUDSDK_COMPUTE_ZONE=${_ZONE}'

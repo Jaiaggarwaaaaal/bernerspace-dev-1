@@ -68,5 +68,5 @@ jobs:
 
         # Now, submit the configured file to Cloud Build to apply
         gcloud builds submit . 
-          --config=./manager/cloudbuild.yaml 
+          --config=cloudbuild.yaml 
           --substitutions=_CLUSTER=${{ secrets.GKE_CLUSTER_NAME }},_ZONE=${{ secrets.GKE_CLUSTER_ZONE }}
