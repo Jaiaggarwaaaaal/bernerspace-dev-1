@@ -57,7 +57,7 @@ jobs:
         docker push ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest
 
     # 6. Deploy to Google Kubernetes Engine
-    - name: Deploy via Cloud Build Proxy
+    - name: Deploy via gcs-k8s-deployment-manager
       run: |
         # First, substitute the placeholder values in the deployment manifest
         sed -i'' -e 's|<MANAGER_IMAGE_REGISTRY_URL>|${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
