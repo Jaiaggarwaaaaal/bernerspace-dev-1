@@ -1,9 +1,11 @@
 # manager/cloudbuild.yaml
 steps:
 - name: 'gcr.io/cloud-builders/gcloud'
+  args: ['auth', 'list']
+  entrypoint: gcloud
+- name: 'gcr.io/cloud-builders/gcloud'
   args: ['container', 'clusters', 'get-credentials', '${_CLUSTER}', '--zone=${_ZONE}', '--project=${PROJECT_ID}']
   env:
-
   - 'CLOUDSDK_COMPUTE_ZONE=${_ZONE}'
   - 'CLOUDSDK_CONTAINER_CLUSTER=${_CLUSTER}'
 - name: 'gcr.io/cloud-builders/kubectl'
@@ -11,8 +13,6 @@ steps:
   - 'apply'
   - '-f'
   - 'manager/manager-deployment.yaml'
-  - '--validate=false'
   env:
-
   - 'CLOUDSDK_COMPUTE_ZONE=${_ZONE}'
   - 'CLOUDSDK_CONTAINER_CLUSTER=${_CLUSTER}'
