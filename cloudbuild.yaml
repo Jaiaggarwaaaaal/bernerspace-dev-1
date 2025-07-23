@@ -6,6 +6,11 @@ steps:
   - 'CLOUDSDK_COMPUTE_ZONE=${_ZONE}'
   - 'CLOUDSDK_CONTAINER_CLUSTER=${_CLUSTER}'
 - name: 'gcr.io/cloud-builders/kubectl'
+  entrypoint: bash
+  args:
+  - '-c'
+  - 'echo "KUBECONFIG: $KUBECONFIG" && kubectl config view'
+- name: 'gcr.io/cloud-builders/kubectl'
   args:
   - 'apply'
   - '-f'
