@@ -74,6 +74,8 @@ spec:
         # IMPORTANT: This placeholder will be replaced by the CI/CD pipeline
         image: <MANAGER_IMAGE_REGISTRY_URL>/gcs-k8s-deployment-manager:latest
         env:
+        - name: GCS_BUCKET_NAME
+          value: "bspace-1"
         # This is the registry for USER APPLICATIONS built by Kaniko
         - name: CONTAINER_REGISTRY_URL
           value: "<CONTAINER_REGISTRY_URL>"
