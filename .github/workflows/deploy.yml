@@ -20,6 +20,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: "DEBUG: Print repository name"
+      run: echo "The exact repository name is ${{ github.repository }}"
+
     - name: Checkout code
       uses: actions/checkout@v3
 
