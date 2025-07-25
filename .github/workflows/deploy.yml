@@ -6,7 +6,8 @@ on:
   push:
     branches:
       - main
-      - deploy
+      # - deploy
+      - logging
 
 env:
   # Define environment variables that are not secret
