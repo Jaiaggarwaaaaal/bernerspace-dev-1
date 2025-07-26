@@ -40,7 +40,7 @@ POLL_INTERVAL_SECONDS = 10
 CONTAINER_REGISTRY_URL = os.getenv('CONTAINER_REGISTRY_URL')
 K8S_NAMESPACE = os.getenv('K8S_NAMESPACE', 'bspacekubs')
 BUILD_SERVICE_ACCOUNT_NAME = os.getenv('BUILD_SERVICE_ACCOUNT_NAME', 'bspace')
-DOMAIN_NAME = os.getenv('DOMAIN_NAME')
+DOMAIN_NAME = "ideabrowse.com"
 
 def load_processed_files():
     if not os.path.exists(LOG_FILE_PATH): return set()
@@ -165,10 +165,10 @@ def watch_build_job(k8s_batch_v1, job_name, namespace, correlation_id):
 def deploy_application(k8s_clients, app_name, app_version, image_name, correlation_id):
     logging.info("Deploying application '%s:%s'.", app_name, app_version, extra={'correlation_id': correlation_id})
     
-    # A unique name for labels and selectors, consistent across versions of the same app
     base_name = sanitize_k8s_name(f"{app_name}-{correlation_id}")
-    # A unique name for each versioned resource instance (Deployment, Service)
     resource_name = sanitize_k8s_name(f"{base_name}-{app_version}")
+    # Stable ingress name that doesn't change with versions
+    ingress_name = sanitize_k8s_name(f"{base_name}-ingress")
 
     def get_template(template_name):
         script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -222,18 +222,19 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
     # Process Ingress
     try:
         if not DOMAIN_NAME: return
+        
         ingress_manifest_str = get_template("ingress.yaml")
         ingress_manifest_str = ingress_manifest_str.replace("{{APP_NAME}}", app_name)
-        ingress_manifest_str = ingress_manifest_str.replace("{{BASE_NAME}}", base_name)
+        ingress_manifest_str = ingress_manifest_str.replace("{{INGRESS_NAME}}", ingress_name)
         ingress_manifest_str = ingress_manifest_str.replace("{{RESOURCE_NAME}}", resource_name)
         ingress_manifest_str = ingress_manifest_str.replace("{{DOMAIN_NAME}}", DOMAIN_NAME)
+        ingress_manifest_str = ingress_manifest_str.replace("{{BASE_NAME}}", base_name)
         ingress_manifest = yaml.safe_load(ingress_manifest_str)
-        ingress_name = f"{resource_name}-ingress"
 
         try:
             k8s_clients["networking"].read_namespaced_ingress(name=ingress_name, namespace=K8S_NAMESPACE)
             k8s_clients["networking"].patch_namespaced_ingress(name=ingress_name, namespace=K8S_NAMESPACE, body=ingress_manifest)
-            logging.info("Patched existing ingress '%s'.", ingress_name, extra={'correlation_id': correlation_id})
+            logging.info("Patched existing ingress '%s' to point to service '%s'.", ingress_name, resource_name, extra={'correlation_id': correlation_id})
         except client.ApiException as e:
             if e.status == 404:
                 k8s_clients["networking"].create_namespaced_ingress(namespace=K8S_NAMESPACE, body=ingress_manifest)
@@ -249,7 +250,6 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
 
 def process_new_tarball(gcs_client, k8s_clients, blob, processed_files):
     path_parts = blob.name.split('/')
-    # CORRECTED PATH PARSING: <project_name>/<project_id>/<version>/...
     if len(path_parts) < 4:
         logging.warning("Skipping file with invalid path structure: %s", blob.name)
         return
@@ -257,6 +257,20 @@ def process_new_tarball(gcs_client, k8s_clients, blob, processed_files):
     app_name = sanitize_k8s_name(path_parts[0])
     correlation_id = path_parts[1]
     app_version = sanitize_k8s_name(path_parts[2])
+    
+    # Pre-flight check to prevent reprocessing
+    base_name = sanitize_k8s_name(f"{app_name}-{correlation_id}")
+    resource_name = sanitize_k8s_name(f"{base_name}-{app_version}")
+    try:
+        k8s_clients["apps"].read_namespaced_deployment(name=resource_name, namespace=K8S_NAMESPACE)
+        logging.info("Deployment '%s' already exists. Skipping processing for blob '%s'.", resource_name, blob.name)
+        save_processed_file(blob.name) # Mark as processed to avoid re-checking
+        processed_files.add(blob.name)
+        return
+    except client.ApiException as e:
+        if e.status != 404:
+            logging.error("Failed to check for existing deployment '%s': %s", resource_name, e)
+            return # Don't process if we can't verify
 
     logging.info("Processing app: %s, version: %s", app_name, app_version, extra={'correlation_id': correlation_id})
 
