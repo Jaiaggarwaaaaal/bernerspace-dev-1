@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: configmap-manager-role
+  namespace: bspacekubs # Make sure this is the namespace your manager runs in
+rules:
+- apiGroups: [""] # "" indicates the core API group
+  resources: ["configmaps"]
+  verbs: ["get", "create", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: configmap-manager-binding
+  namespace: bspacekubs # Make sure this is the namespace your manager runs in
+subjects:
+- kind: ServiceAccount
+  name: bspace # The service account used by your manager deployment
+  namespace: bspacekubs
+roleRef:
+  kind: Role
+  name: configmap-manager-role
+  apiGroup: rbac.authorization.k8s.io
