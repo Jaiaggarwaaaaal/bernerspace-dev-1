@@ -75,17 +75,15 @@ jobs:
     # 7. Deploy to Google Kubernetes Engine
     - name: Deploy to GKE
       run: |
-        echo "Updating deployment manifest with correct image tag and environment variables..."
-        # Substitute placeholder values
-        sed -i'' -e 's|<MANAGER_IMAGE_REGISTRY_URL>|${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
-        sed -i'' -e 's|<CONTAINER_REGISTRY_URL>|${{ secrets.CONTAINER_REGISTRY_URL }}|g' ./manager/manager-deployment.yaml
-        sed -i'' -e 's|<YOUR_EMAIL_FOR_LETSENCRYPT>|${{ secrets.LETSENCRYPT_EMAIL }}|g' ./manager/manager-deployment.yaml
+        echo "Applying RBAC permissions..."
+        kubectl apply -f ./manager/manager-rbac.yaml
 
-        # Replace the general ':latest' tag with the specific git SHA for an immutable deployment
-        echo "Setting image tag to ${{ github.sha }}"
-        sed -i'' -e "s|image: ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:latest|image: ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" ./manager/manager-deployment.yaml
+        echo "Updating deployment manifest with correct image tag..."
+        # This more specific sed command finds the line containing "image:" and replaces the whole line
+        # This is more robust than matching the full image name and tag.
+        sed -i'' -e "s|image:.*|image: ${{ secrets.MANAGER_IMAGE_REGISTRY_URL }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" ./manager/manager-deployment.yaml
 
-        echo "Applying the manifest to the cluster..."
+        echo "Applying the deployment manifest to the cluster..."
         kubectl apply -f ./manager/manager-deployment.yaml
 
 
