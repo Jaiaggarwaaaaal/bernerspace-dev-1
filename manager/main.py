@@ -34,20 +34,55 @@ logger.addHandler(handler)
 
 # --- Configuration ---
 load_dotenv()
-LOG_FILE_PATH = "processed_files.log"
+PROCESSED_FILES_CM = "processed-files-log"  # ConfigMap name
+PROCESSED_FILES_KEY = "files"             # Key in the ConfigMap
 GCS_BUCKET_NAME = os.getenv('GCS_BUCKET_NAME')
 POLL_INTERVAL_SECONDS = 10
 CONTAINER_REGISTRY_URL = os.getenv('CONTAINER_REGISTRY_URL')
 K8S_NAMESPACE = os.getenv('K8S_NAMESPACE', 'bspacekubs')
 BUILD_SERVICE_ACCOUNT_NAME = os.getenv('BUILD_SERVICE_ACCOUNT_NAME', 'bspace')
-DOMAIN_NAME = "ideabrowse.com"
+DOMAIN_NAME = os.getenv('DOMAIN_NAME')
+
+k8s_core_v1 = None # Will be initialized in main
 
 def load_processed_files():
-    if not os.path.exists(LOG_FILE_PATH): return set()
-    with open(LOG_FILE_PATH, "r") as f: return set(line.strip() for line in f)
+    """Loads the list of processed files from a ConfigMap."""
+    global k8s_core_v1
+    try:
+        cm = k8s_core_v1.read_namespaced_config_map(name=PROCESSED_FILES_CM, namespace=K8S_NAMESPACE)
+        files_str = cm.data.get(PROCESSED_FILES_KEY, "")
+        return set(files_str.splitlines())
+    except client.ApiException as e:
+        if e.status == 404:
+            logging.warning("ConfigMap '%s' not found, starting with an empty set of processed files.", PROCESSED_FILES_CM)
+            return set()
+        else:
+            logging.error("Failed to load ConfigMap '%s': %s", PROCESSED_FILES_CM, e)
+            # In case of other API errors, exit or handle appropriately
+            raise
 
 def save_processed_file(filename):
-    with open(LOG_FILE_PATH, "a") as f: f.write(f"{filename}\n")
+    """Adds a filename to the processed files list in the ConfigMap."""
+    global k8s_core_v1
+    try:
+        cm = k8s_core_v1.read_namespaced_config_map(name=PROCESSED_FILES_CM, namespace=K8S_NAMESPACE)
+        files = cm.data.get(PROCESSED_FILES_KEY, "")
+        if filename not in files.splitlines():
+            cm.data[PROCESSED_FILES_KEY] = files + filename + "\n"
+            k8s_core_v1.patch_namespaced_config_map(name=PROCESSED_FILES_CM, namespace=K8S_NAMESPACE, body=cm)
+    except client.ApiException as e:
+        if e.status == 404:
+            # Create the ConfigMap if it doesn't exist
+            body = client.V1ConfigMap(
+                api_version="v1",
+                kind="ConfigMap",
+                metadata=client.V1ObjectMeta(name=PROCESSED_FILES_CM),
+                data={PROCESSED_FILES_KEY: filename + "\n"}
+            )
+            k8s_core_v1.create_namespaced_config_map(namespace=K8S_NAMESPACE, body=body)
+        else:
+            logging.error("Failed to save to ConfigMap '%s': %s", PROCESSED_FILES_CM, e)
+            raise
 
 def get_gcs_client():
     try:
@@ -146,8 +181,25 @@ def create_kaniko_job(k8s_batch_v1, app_name, app_version, context_gcs_uri, dest
     return job_name
 
 def watch_build_job(k8s_batch_v1, job_name, namespace, correlation_id):
-    # ... (this function is unchanged)
     logging.info("Watching job '%s'...", job_name, extra={'correlation_id': correlation_id})
+    
+    # Retry logic for finding the job initially
+    max_retries = 3
+    retry_delay = 5 # seconds
+    for attempt in range(max_retries):
+        try:
+            job_status = k8s_batch_v1.read_namespaced_job_status(job_name, namespace)
+            logging.info("Successfully found job '%s'. Proceeding to watch.", job_name, extra={'correlation_id': correlation_id})
+            break # Exit retry loop if job is found
+        except client.ApiException as e:
+            if e.status == 404 and attempt < max_retries - 1:
+                logging.warning("Job '%s' not found, retrying in %d seconds...", job_name, retry_delay, extra={'correlation_id': correlation_id})
+                time.sleep(retry_delay)
+            else:
+                logging.error("API error finding job '%s' after %d attempts: %s", job_name, attempt + 1, e, extra={'correlation_id': correlation_id})
+                return False
+    
+    # Main watch loop
     while True:
         try:
             job_status = k8s_batch_v1.read_namespaced_job_status(job_name, namespace)
@@ -155,8 +207,13 @@ def watch_build_job(k8s_batch_v1, job_name, namespace, correlation_id):
                 logging.info("Job '%s' succeeded.", job_name, extra={'correlation_id': correlation_id})
                 return True
             if job_status.status.failed:
-                logging.error("Job '%s' failed.", job_name, extra={'correlation_id': correlation_id})
+                logging.error("Job '%s' failed. Status: %s", job_name, job_status.status, extra={'correlation_id': correlation_id})
                 return False
+            
+            # Provide more detailed status logging
+            active = job_status.status.active
+            logging.info("Job '%s' is still running. Active pods: %s", job_name, active, extra={'correlation_id': correlation_id})
+
         except client.ApiException as e:
             logging.error("API error watching job '%s': %s", job_name, e, extra={'correlation_id': correlation_id})
             return False
@@ -257,20 +314,6 @@ def process_new_tarball(gcs_client, k8s_clients, blob, processed_files):
     app_name = sanitize_k8s_name(path_parts[0])
     correlation_id = path_parts[1]
     app_version = sanitize_k8s_name(path_parts[2])
-    
-    # Pre-flight check to prevent reprocessing
-    base_name = sanitize_k8s_name(f"{app_name}-{correlation_id}")
-    resource_name = sanitize_k8s_name(f"{base_name}-{app_version}")
-    try:
-        k8s_clients["apps"].read_namespaced_deployment(name=resource_name, namespace=K8S_NAMESPACE)
-        logging.info("Deployment '%s' already exists. Skipping processing for blob '%s'.", resource_name, blob.name)
-        save_processed_file(blob.name) # Mark as processed to avoid re-checking
-        processed_files.add(blob.name)
-        return
-    except client.ApiException as e:
-        if e.status != 404:
-            logging.error("Failed to check for existing deployment '%s': %s", resource_name, e)
-            return # Don't process if we can't verify
 
     logging.info("Processing app: %s, version: %s", app_name, app_version, extra={'correlation_id': correlation_id})
 
@@ -285,14 +328,16 @@ def process_new_tarball(gcs_client, k8s_clients, blob, processed_files):
         if build_succeeded:
             deploy_application(k8s_clients, app_name, app_version, destination_image, correlation_id)
             logging.info("Successfully processed and deployed '%s'.", app_name, extra={'correlation_id': correlation_id})
+            # Mark as processed only on full success
+            save_processed_file(blob.name)
+            processed_files.add(blob.name)
         else:
             raise RuntimeError(f"Build job {job_name} failed.")
 
     except Exception as e:
         logging.error("An unexpected error occurred while processing '%s': %s", blob.name, e, extra={'correlation_id': correlation_id})
-    finally:
-        save_processed_file(blob.name)
-        processed_files.add(blob.name)
+        # Do not save to processed_files on failure, so it can be retried.
+
 
 def watch_gcs_bucket(gcs_client, k8s_clients):
     processed_files = load_processed_files()
@@ -309,14 +354,23 @@ def watch_gcs_bucket(gcs_client, k8s_clients):
             time.sleep(POLL_INTERVAL_SECONDS * 2)
 
 def main():
+    global k8s_core_v1
     if not all([GCS_BUCKET_NAME, CONTAINER_REGISTRY_URL, DOMAIN_NAME]):
-        logging.error("Missing required environment variables.")
+        logging.error("Missing required environment variables: GCS_BUCKET_NAME, CONTAINER_REGISTRY_URL, DOMAIN_NAME")
         return
-    gcs_client = get_gcs_client()
+    
     k8s_clients = init_k8s_clients()
-    if not gcs_client or not k8s_clients:
-        logging.error("Failed to initialize clients. Exiting.")
+    if not k8s_clients:
+        logging.error("Failed to initialize Kubernetes clients. Exiting.")
         return
+    
+    k8s_core_v1 = k8s_clients["core"]
+
+    gcs_client = get_gcs_client()
+    if not gcs_client:
+        logging.error("Failed to initialize GCS client. Exiting.")
+        return
+        
     watch_gcs_bucket(gcs_client, k8s_clients)
 
 if __name__ == "__main__":
