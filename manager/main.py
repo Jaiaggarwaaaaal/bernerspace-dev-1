@@ -344,10 +344,15 @@ def watch_gcs_bucket(gcs_client, k8s_clients):
     logging.info("Starting GCS bucket watch. Loaded %d processed files.", len(processed_files))
     while True:
         try:
-            blobs = gcs_client.list_blobs(GCS_BUCKET_NAME)
-            for blob in blobs:
+            all_blobs = list(gcs_client.list_blobs(GCS_BUCKET_NAME))
+            
+            # Sort blobs by creation time, newest first
+            sorted_blobs = sorted(all_blobs, key=lambda b: b.time_created, reverse=True)
+            
+            for blob in sorted_blobs:
                 if blob.name.endswith(('.tar.gz', '.tar')) and blob.name not in processed_files:
                     process_new_tarball(gcs_client, k8s_clients, blob, processed_files)
+            
             time.sleep(POLL_INTERVAL_SECONDS)
         except Exception as e:
             logging.error("Error polling bucket: %s", e)
