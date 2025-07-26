@@ -112,16 +112,19 @@ def init_k8s_clients():
         "networking": client.NetworkingV1Api(),
     }
 
+
 def sanitize_k8s_name(name):
     name = name.lower()
     name = re.sub(r'[^a-z0-9-]', '-', name)
     return name.strip('-')
+
 
 def find_dockerfile_path(blob, correlation_id):
     with tempfile.NamedTemporaryFile() as temp_tar:
         try:
             logging.info("Searching for Dockerfile in '%s'.", blob.name, extra={'correlation_id': correlation_id})
             blob.download_to_filename(temp_tar.name)
+
             open_mode = "r:gz" if blob.name.endswith(".tar.gz") else "r:"
             with tarfile.open(temp_tar.name, open_mode) as tar:
                 for member in tar.getmembers():
@@ -130,15 +133,18 @@ def find_dockerfile_path(blob, correlation_id):
                         logging.info("Dockerfile found in context path: '%s'", context_path, extra={'correlation_id': correlation_id})
                         return context_path
             logging.error("Dockerfile not found in archive '%s'.", blob.name, extra={'correlation_id': correlation_id})
+
             return None
         except Exception as e:
             logging.error("Error validating tarball '%s': %s", blob.name, e, extra={'correlation_id': correlation_id})
             return None
 
+
 def create_kaniko_job(k8s_batch_v1, app_name, app_version, context_gcs_uri, destination_image, context_sub_path, correlation_id):
     job_name = sanitize_k8s_name(f"build-{app_name}-{app_version}-{int(time.time())}")
     logging.info("Creating Kaniko Job: %s", job_name, extra={'correlation_id': correlation_id})
     # ... (rest of Kaniko job creation is the same)
+
     init_container = client.V1Container(
         name="setup-source",
         image="gcr.io/google.com/cloudsdktool/cloud-sdk:slim",
@@ -219,6 +225,7 @@ def watch_build_job(k8s_batch_v1, job_name, namespace, correlation_id):
             return False
         time.sleep(15)
 
+
 def deploy_application(k8s_clients, app_name, app_version, image_name, correlation_id):
     logging.info("Deploying application '%s:%s'.", app_name, app_version, extra={'correlation_id': correlation_id})
     
@@ -232,9 +239,10 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
         template_path = os.path.join(script_dir, 'templates', template_name)
         with open(template_path) as f:
             return f.read()
-    
+
     # Process Deployment
     try:
+
         deployment_manifest_str = get_template("deployment.yaml")
         deployment_manifest_str = deployment_manifest_str.replace("{{APP_NAME}}", app_name)
         deployment_manifest_str = deployment_manifest_str.replace("{{BASE_NAME}}", base_name)
@@ -254,10 +262,12 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
             else: raise
     except Exception as e:
         logging.error("Error processing deployment for '%s': %s", resource_name, e, extra={'correlation_id': correlation_id})
+
         raise
 
     # Process Service
     try:
+
         service_manifest_str = get_template("service.yaml")
         service_manifest_str = service_manifest_str.replace("{{BASE_NAME}}", base_name)
         service_manifest_str = service_manifest_str.replace("{{RESOURCE_NAME}}", resource_name)
@@ -274,10 +284,12 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
             else: raise
     except Exception as e:
         logging.error("Error processing service for '%s': %s", resource_name, e, extra={'correlation_id': correlation_id})
+
         raise
 
     # Process Ingress
     try:
+
         if not DOMAIN_NAME: return
         
         ingress_manifest_str = get_template("ingress.yaml")
@@ -288,8 +300,11 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
         ingress_manifest_str = ingress_manifest_str.replace("{{BASE_NAME}}", base_name)
         ingress_manifest = yaml.safe_load(ingress_manifest_str)
 
+
+        ingress_name = f"{app_name}-{app_version}-ingress"
         try:
             k8s_clients["networking"].read_namespaced_ingress(name=ingress_name, namespace=K8S_NAMESPACE)
+
             k8s_clients["networking"].patch_namespaced_ingress(name=ingress_name, namespace=K8S_NAMESPACE, body=ingress_manifest)
             logging.info("Patched existing ingress '%s' to point to service '%s'.", ingress_name, resource_name, extra={'correlation_id': correlation_id})
         except client.ApiException as e:
@@ -303,6 +318,7 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
 
     except Exception as e:
         logging.error("Error processing ingress for '%s': %s", resource_name, e, extra={'correlation_id': correlation_id})
+
         raise
 
 def process_new_tarball(gcs_client, k8s_clients, blob, processed_files):

@@ -1,20 +1,27 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+
   name: "{{RESOURCE_NAME}}"
   labels:
     app: "{{BASE_NAME}}"
+
     version: "{{APP_VERSION}}"
 spec:
   replicas: 1
   selector:
     matchLabels:
+
       app: "{{BASE_NAME}}"
+
       version: "{{APP_VERSION}}"
   template:
     metadata:
       labels:
+
         app: "{{BASE_NAME}}"
+
+
         version: "{{APP_VERSION}}"
     spec:
       containers:

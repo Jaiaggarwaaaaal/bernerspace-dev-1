@@ -9,6 +9,7 @@ on:
       # - deploy
       - logging
 
+
 env:
   # Define environment variables that are not secret
   IMAGE_NAME: gcs-k8s-deployment-manager
