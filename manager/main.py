@@ -165,8 +165,10 @@ def watch_build_job(k8s_batch_v1, job_name, namespace, correlation_id):
 def deploy_application(k8s_clients, app_name, app_version, image_name, correlation_id):
     logging.info("Deploying application '%s:%s'.", app_name, app_version, extra={'correlation_id': correlation_id})
     
-    # CORRECTED: Resource name now starts with the app_name (alphabetic)
-    resource_name = sanitize_k8s_name(f"{app_name}-{correlation_id}-{app_version}")
+    # A unique name for labels and selectors, consistent across versions of the same app
+    base_name = sanitize_k8s_name(f"{app_name}-{correlation_id}")
+    # A unique name for each versioned resource instance (Deployment, Service)
+    resource_name = sanitize_k8s_name(f"{base_name}-{app_version}")
 
     def get_template(template_name):
         script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -174,11 +176,12 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
         with open(template_path) as f:
             return f.read()
     
-    # ... (The rest of the deploy_application function is the same as the last correct version)
     # Process Deployment
     try:
         deployment_manifest_str = get_template("deployment.yaml")
-        deployment_manifest_str = deployment_manifest_str.replace("{{APP_NAME}}", resource_name) # Use full resource_name
+        deployment_manifest_str = deployment_manifest_str.replace("{{APP_NAME}}", app_name)
+        deployment_manifest_str = deployment_manifest_str.replace("{{BASE_NAME}}", base_name)
+        deployment_manifest_str = deployment_manifest_str.replace("{{RESOURCE_NAME}}", resource_name)
         deployment_manifest_str = deployment_manifest_str.replace("{{APP_VERSION}}", app_version)
         deployment_manifest_str = deployment_manifest_str.replace("{{IMAGE_NAME}}", image_name)
         deployment_manifest = yaml.safe_load(deployment_manifest_str)
@@ -186,9 +189,11 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
         try:
             k8s_clients["apps"].read_namespaced_deployment(name=resource_name, namespace=K8S_NAMESPACE)
             k8s_clients["apps"].patch_namespaced_deployment(name=resource_name, namespace=K8S_NAMESPACE, body=deployment_manifest)
+            logging.info("Patched existing deployment '%s'.", resource_name, extra={'correlation_id': correlation_id})
         except client.ApiException as e:
             if e.status == 404:
                 k8s_clients["apps"].create_namespaced_deployment(namespace=K8S_NAMESPACE, body=deployment_manifest)
+                logging.info("Created new deployment '%s'.", resource_name, extra={'correlation_id': correlation_id})
             else: raise
     except Exception as e:
         logging.error("Error processing deployment for '%s': %s", resource_name, e, extra={'correlation_id': correlation_id})
@@ -197,15 +202,18 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
     # Process Service
     try:
         service_manifest_str = get_template("service.yaml")
-        service_manifest_str = service_manifest_str.replace("{{APP_NAME}}", resource_name) # Use full resource_name
+        service_manifest_str = service_manifest_str.replace("{{BASE_NAME}}", base_name)
+        service_manifest_str = service_manifest_str.replace("{{RESOURCE_NAME}}", resource_name)
         service_manifest_str = service_manifest_str.replace("{{APP_VERSION}}", app_version)
         service_manifest = yaml.safe_load(service_manifest_str)
         
         try:
             k8s_clients["core"].read_namespaced_service(name=resource_name, namespace=K8S_NAMESPACE)
+            logging.info("Service '%s' already exists, skipping patch.", resource_name, extra={'correlation_id': correlation_id})
         except client.ApiException as e:
             if e.status == 404:
                 k8s_clients["core"].create_namespaced_service(namespace=K8S_NAMESPACE, body=service_manifest)
+                logging.info("Created new service '%s'.", resource_name, extra={'correlation_id': correlation_id})
             else: raise
     except Exception as e:
         logging.error("Error processing service for '%s': %s", resource_name, e, extra={'correlation_id': correlation_id})
@@ -215,8 +223,9 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
     try:
         if not DOMAIN_NAME: return
         ingress_manifest_str = get_template("ingress.yaml")
-        ingress_manifest_str = ingress_manifest_str.replace("{{APP_NAME}}", resource_name) # Use full resource_name
-        ingress_manifest_str = ingress_manifest_str.replace("{{APP_VERSION}}", app_version)
+        ingress_manifest_str = ingress_manifest_str.replace("{{APP_NAME}}", app_name)
+        ingress_manifest_str = ingress_manifest_str.replace("{{BASE_NAME}}", base_name)
+        ingress_manifest_str = ingress_manifest_str.replace("{{RESOURCE_NAME}}", resource_name)
         ingress_manifest_str = ingress_manifest_str.replace("{{DOMAIN_NAME}}", DOMAIN_NAME)
         ingress_manifest = yaml.safe_load(ingress_manifest_str)
         ingress_name = f"{resource_name}-ingress"
@@ -224,10 +233,16 @@ def deploy_application(k8s_clients, app_name, app_version, image_name, correlati
         try:
             k8s_clients["networking"].read_namespaced_ingress(name=ingress_name, namespace=K8S_NAMESPACE)
             k8s_clients["networking"].patch_namespaced_ingress(name=ingress_name, namespace=K8S_NAMESPACE, body=ingress_manifest)
+            logging.info("Patched existing ingress '%s'.", ingress_name, extra={'correlation_id': correlation_id})
         except client.ApiException as e:
             if e.status == 404:
                 k8s_clients["networking"].create_namespaced_ingress(namespace=K8S_NAMESPACE, body=ingress_manifest)
+                logging.info("Created new ingress '%s'.", ingress_name, extra={'correlation_id': correlation_id})
             else: raise
+        
+        ingress_url = f"https://{app_name}.{DOMAIN_NAME}"
+        logging.info("Application ingress URL: %s", ingress_url, extra={'correlation_id': correlation_id})
+
     except Exception as e:
         logging.error("Error processing ingress for '%s': %s", resource_name, e, extra={'correlation_id': correlation_id})
         raise

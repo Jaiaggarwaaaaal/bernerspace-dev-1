@@ -1,24 +1,24 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: "{{APP_NAME}}-{{APP_VERSION}}-ingress"
+  name: "{{RESOURCE_NAME}}-ingress"
   annotations:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
   ingressClassName: nginx
   rules:
-  - host: "{{APP_NAME}}-{{APP_VERSION}}.ideabrowse.com"
+  - host: "{{APP_NAME}}.ideabrowse.com"
     http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: "{{APP_NAME}}-{{APP_VERSION}}"
+            name: "{{RESOURCE_NAME}}"
             port:
               number: 80
   tls:
   - hosts:
-    - "{{APP_NAME}}-{{APP_VERSION}}.ideabrowse.com"
-    secretName: "{{APP_NAME}}-{{APP_VERSION}}-tls"
+    - "{{APP_NAME}}.ideabrowse.coom"
+    secretName: "{{BASE_NAME}}-tls"
