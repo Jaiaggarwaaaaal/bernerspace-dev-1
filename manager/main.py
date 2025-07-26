@@ -41,7 +41,7 @@ POLL_INTERVAL_SECONDS = 10
 CONTAINER_REGISTRY_URL = os.getenv('CONTAINER_REGISTRY_URL')
 K8S_NAMESPACE = os.getenv('K8S_NAMESPACE', 'bspacekubs')
 BUILD_SERVICE_ACCOUNT_NAME = os.getenv('BUILD_SERVICE_ACCOUNT_NAME', 'bspace')
-DOMAIN_NAME = ideabrowse.com
+DOMAIN_NAME = "ideabrowse.com"
 
 k8s_core_v1 = None # Will be initialized in main
 
