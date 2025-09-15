@@ -124,3 +124,6 @@ To deploy a new application:
     kubectl get deployment,service,ingress -n bspacekubs
     ```
     - Once the `Ingress` is available and the certificate is ready, your application will be accessible at `https://<app-name>-<version>.<your-domain.com>`.
+
+## Demo Video
+[![Demo Video](https://img.youtube.com/vi/SN57P-qaBzI/0.jpg)](https://www.youtube.com/watch?v=SN57P-qaBzI)
